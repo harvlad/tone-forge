@@ -103,6 +103,50 @@ assert.ok(roles.root >= 3, "root pads present across the grid");
 assert.ok(roles.scale >= 30, "in-key pads across the whole grid");
 assert.ok(roles.out >= 10, "out-of-key pads stay dark");
 
+// ---- modal keys: parseKeyLabel + set-aware scale membership ----
+// The detector emits modal labels ("C# mixolydian"); parsing them as
+// plain Major marked the mode's own ♭7 out-of-key on the Notes surface.
+const mixo = L.parseKeyLabel("C# mixolydian");
+assert.equal(mixo.root, 1);
+assert.equal(mixo.scale, "Major"); // natural-3 mode folds to Major
+assert.deepEqual([...mixo.pitchClasses].sort((a, b) => a - b),
+  [1, 3, 5, 6, 8, 10, 11]); // C# D# E# F# G# A# B — the ♭7 (B) is IN
+assert.equal(scaleDegreeInKey(11, mixo), 7, "mixolydian ♭7 is in-key");
+assert.equal(scaleDegreeInKey(0, mixo), null, "natural 7 (B#) is out");
+assert.deepEqual(instrumentPadColor(11, mixo, new Set(), "off"),
+  { rgb: SCALE_RGB, kind: "static", role: "scale" },
+  "♭7 pad gets the scale tint in mixolydian");
+
+const dorian = L.parseKeyLabel("A dorian");
+assert.equal(dorian.root, 9);
+assert.equal(dorian.scale, "Minor"); // ♭3 mode folds to Minor
+assert.equal(scaleDegreeInKey(6, dorian), 6, "dorian raised 6th (F#) in");
+assert.equal(scaleDegreeInKey(5, dorian), null, "aeolian ♭6 (F) out");
+
+// Plain Major/Minor behavior identical to the interval tables.
+const aMin = L.parseKeyLabel("A Minor");
+assert.deepEqual([...aMin.pitchClasses].sort((a, b) => a - b),
+  [...key(9, "Minor").pitchClasses].sort((a, b) => a - b));
+assert.equal(aMin.scale, "Minor");
+assert.equal(L.parseKeyLabel("F# Major").root, 6);
+assert.equal(L.parseKeyLabel("F# Major").scale, "Major");
+// Abbreviations + flats keep working (kit header shows "Eb min").
+assert.equal(L.parseKeyLabel("Eb min").root, 3);
+assert.equal(L.parseKeyLabel("Eb min").scale, "Minor");
+// Junk stays safe: unknown ROOT → null (caller keeps its no-key
+// fallback); unknown SCALE word → Major, byte-compatible with the
+// legacy jam.js parser.
+assert.equal(L.parseKeyLabel("H major"), null);
+assert.equal(L.parseKeyLabel("C"), null);
+assert.equal(L.parseKeyLabel(""), null);
+assert.equal(L.parseKeyLabel(null), null);
+assert.equal(L.parseKeyLabel("C blorp").scale, "Major");
+assert.equal(L.parseKeyLabel("C blorp").root, 0);
+// Legacy {root, scale} keys with no pitchClasses set still resolve via
+// the binary interval tables (manual-key path).
+assert.equal(scaleDegreeInKey(3, { root: 0, scale: "Minor" }), 3);
+assert.equal(scaleDegreeInKey(4, { root: 0, scale: "Minor" }), null);
+
 // ---- legend/grid identity: the instrument legend's Scale chip is the
 // grid's in-key constant, root chip the root constant ----
 L.setMode("instrument-synth");

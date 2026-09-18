@@ -52,6 +52,47 @@
   const MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11];
   const MINOR_INTERVALS = [0, 2, 3, 5, 7, 8, 10]; // natural minor
 
+  // The seven diatonic modes as interval sets from the root (ionian =
+  // Major, aeolian = natural Minor). The key detector emits modal
+  // labels ("C# mixolydian"); parsing them as plain Major marked the
+  // mode's own alterations out-of-key on the Notes surface — the ♭7 of
+  // a mixolydian song rendered dark even though it's IN the mode.
+  const MODE_INTERVALS = {
+    major: MAJOR_INTERVALS,
+    ionian: MAJOR_INTERVALS,
+    minor: MINOR_INTERVALS,
+    aeolian: MINOR_INTERVALS,
+    dorian: [0, 2, 3, 5, 7, 9, 10],
+    phrygian: [0, 1, 3, 5, 7, 8, 10],
+    lydian: [0, 2, 4, 6, 7, 9, 11],
+    mixolydian: [0, 2, 4, 5, 7, 9, 10],
+    locrian: [0, 1, 3, 5, 6, 8, 10],
+  };
+
+  // Parse a detected-key label ("C Major", "A Minor", "C# mixolydian",
+  // "A dorian", abbreviated "Eb min") into { root, scale, pitchClasses }.
+  // `scale` stays the binary Major/Minor that label/palette consumers
+  // key off (♭3 modes fold to Minor); `pitchClasses` carries the TRUE
+  // modal membership, which _scaleDegreeInKey prefers. Unknown scale
+  // words fall back exactly like the legacy jam.js parser (min* →
+  // Minor, anything else → Major); junk roots/short labels → null so
+  // callers keep their own no-key fallback.
+  function _parseKeyLabel(label) {
+    if (!label || typeof label !== 'string') return null;
+    const parts = label.trim().split(/\s+/);
+    if (parts.length < 2) return null;
+    const root = PC[parts[0]];
+    if (root === undefined) return null;
+    const word = parts[1].toLowerCase();
+    let intervals = MODE_INTERVALS[word];
+    if (!intervals) intervals = /^min/.test(word) ? MINOR_INTERVALS : MAJOR_INTERVALS;
+    return {
+      root,
+      scale: intervals[2] === 3 ? 'Minor' : 'Major', // ♭3 ⇒ Minor-flavored
+      pitchClasses: new Set(intervals.map((i) => (root + i) % 12)),
+    };
+  }
+
   // Family palette IDs — hardware palette entries used for Pulse spec on
   // "next-upcoming chord" pads. These are perceptual proxies; exact
   // colours are picked from the LP Pro MK3 default palette table.
@@ -1050,10 +1091,21 @@
   }
 
   // Return the 1-based scale-degree index (1..7) for `pc` in the effective
-  // key, or null if `pc` is out-of-key.
+  // key, or null if `pc` is out-of-key. Modal honesty: when the key
+  // carries an explicit pitch-class set (parseKeyLabel modal keys),
+  // membership + degree follow THAT set — for plain Major/Minor the set
+  // equals the interval table, so behavior there is unchanged. The
+  // binary tables remain the fallback for manual keys / legacy
+  // {root, scale} objects with no set.
   function _scaleDegreeInKey(pc, key) {
     const diff = ((pc - key.root) + 12) % 12;
-    const intervals = key.scale === 'Minor' ? MINOR_INTERVALS : MAJOR_INTERVALS;
+    let intervals;
+    if (key.pitchClasses instanceof Set && key.pitchClasses.size) {
+      intervals = Array.from(key.pitchClasses,
+        (p) => ((p - key.root) + 12) % 12).sort((a, b) => a - b);
+    } else {
+      intervals = key.scale === 'Minor' ? MINOR_INTERVALS : MAJOR_INTERVALS;
+    }
     const idx = intervals.indexOf(diff);
     return idx >= 0 ? idx + 1 : null;
   }
@@ -2638,6 +2690,10 @@
 
   // Exposed helpers for jam.js verifier (canonical symbol match).
   api._canonicalChordKey = _canonicalChordKey;
+
+  // Detected-key label parser — the driver owns key math, so jam.js's
+  // parseDetectedKey delegates here (modal interval sets, node-tested).
+  api.parseKeyLabel = _parseKeyLabel;
 
   // Pure seams for DOM-free node tests (launchpad.test.mjs): the note
   // grid geometry + the note→scale-membership→color mapping the Notes

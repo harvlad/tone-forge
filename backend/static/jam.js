@@ -4374,11 +4374,41 @@
     // localStorage may throw in private-mode Safari; default stays
     // false which matches the safer (higher-WCSR) view.
   }
+  // The user's EXPLICIT lane pick (the selector's change handler writes
+  // the pref), or null when they never chose. Kept SEPARATE from
+  // state.chordLaneStem: the per-song resolution overwrites the state
+  // field (a song may lack the picked lane), and the pick must survive
+  // that to re-apply on the next song that has the lane. Without a pick,
+  // syncChordLaneStemSelect derives the default per song as the lane
+  // with the richest chord coverage.
+  let _chordLanePref = null;
   try {
-    state.chordLaneStem =
-      localStorage.getItem(CHORD_LANE_STEM_PREF_KEY) || 'other';
-  } catch (_) {
-    state.chordLaneStem = 'other';
+    _chordLanePref = localStorage.getItem(CHORD_LANE_STEM_PREF_KEY) || null;
+  } catch (_) {}
+  state.chordLaneStem = _chordLanePref || 'other';
+
+  /** Sum of chord-region seconds in a lane's fixed array. */
+  function _chordLaneCoverageSec(lane) {
+    const arr = (lane && lane.fixed) || [];
+    let cover = 0;
+    for (const c of arr) cover += Math.max(0, (c.endSec || 0) - (c.startSec || 0));
+    return cover;
+  }
+
+  /** The per-stem lane with the RICHEST chord coverage for the loaded
+   * song, or null when no per-stem lanes exist. Coverage (summed region
+   * seconds), not region count — a lane of 77 half-beat slivers should
+   * not outrank one long honest lane, and vice versa. Names sorted so
+   * ties resolve deterministically. */
+  function _richestChordLane() {
+    const byStem = state.rawChordsByStem || {};
+    let best = null;
+    let bestCover = -1;
+    for (const name of Object.keys(byStem).sort()) {
+      const cover = _chordLaneCoverageSec(byStem[name]);
+      if (cover > bestCover) { bestCover = cover; best = name; }
+    }
+    return best;
   }
 
   function activeChordArray() {
@@ -4429,6 +4459,22 @@
     const label = document.getElementById('chord-lane-stem-label');
     if (!select) return;
     const stemNames = Object.keys(state.rawChordsByStem || {}).sort();
+    // Per-song lane resolution, BEFORE the single-lane early-return so
+    // it always runs when per-stem lanes exist:
+    //   * an EXPLICIT user pick (selector change handler) is sticky
+    //     whenever this song has that lane;
+    //   * otherwise the default is the lane with the RICHEST chord
+    //     coverage — the hard-coded 'other' default showed Cross Bones
+    //     Style's 22s residual lane while its guitar lane carried 115s
+    //     of real harmony. Runs per song load (onAnalysisComplete calls
+    //     this before buildChordRibbon, so the ribbon, the driver's
+    //     chord grid and the Chords pads all render the resolved lane).
+    if (stemNames.length) {
+      state.chordLaneStem = (_chordLanePref && stemNames.includes(_chordLanePref))
+        ? _chordLanePref
+        : (_richestChordLane()
+          || (stemNames.includes('other') ? 'other' : stemNames[0]));
+    }
     // Hide the dropdown entirely when there's at most one lane to
     // choose between — legacy bundles (no per-stem dict) and
     // single-stem analyses both collapse to "no choice", and the
@@ -4437,11 +4483,6 @@
     if (stemNames.length <= 1) {
       select.innerHTML = '';
       return;
-    }
-    // If the persisted chordLaneStem isn't in the current bundle's
-    // set, fall back to 'other' (or the first available lane).
-    if (!stemNames.includes(state.chordLaneStem)) {
-      state.chordLaneStem = stemNames.includes('other') ? 'other' : stemNames[0];
     }
     // Repopulate options. innerHTML reset is cheap (≤6 entries) and
     // avoids stale options leaking across analyses.
@@ -4476,9 +4517,20 @@
     select.addEventListener('change', () => {
       const next = select.value || 'other';
       state.chordLaneStem = next;
+      _chordLanePref = next; // explicit pick — sticky across songs
       try { localStorage.setItem(CHORD_LANE_STEM_PREF_KEY, next); } catch (_) {}
       syncChordSnapToggleVisibility();
       buildChordRibbon(activeChordArray());
+      // buildChordRibbon pushed the new lane into the driver
+      // (onChordsLoaded → fresh chord-pad assignment); if the Chords
+      // surface is up, restamp its labels + colors to match.
+      if (_currentPadSurface() !== 'samples') {
+        try { _refreshPadSurfaceLabels(); } catch (_) {}
+        try {
+          window.Launchpad
+            && _renderLaunchpadMirror(window.Launchpad.getGridColors());
+        } catch (_) {}
+      }
     });
   })();
 
@@ -7253,15 +7305,25 @@
   };
 
   function parseDetectedKey(s) {
-    // Accepts "C Major", "A Minor", "F# Major", "Eb Minor", "—".
+    // Accepts "C Major", "A Minor", "C# mixolydian", "Eb min", "—".
     if (!s || typeof s !== 'string' || s === '—') return null;
+    // The Launchpad driver owns key math — delegate so modal labels
+    // resolve to their REAL interval sets (MODE_INTERVALS, node-tested
+    // in launchpad.test.mjs). Parsing "C# mixolydian" as plain Major
+    // here used to mark the mode's own ♭7 out-of-key on the Notes
+    // surface. Same null-on-junk contract as the legacy parser.
+    try {
+      if (window.Launchpad && typeof window.Launchpad.parseKeyLabel === 'function') {
+        return window.Launchpad.parseKeyLabel(s);
+      }
+    } catch (_) {}
+    // Legacy fallback (driver script missing): binary Major/Minor.
+    // ^min matches "minor" AND the abbreviated "min" — an abbreviating
+    // producer must not silently flip the key to Major.
     const parts = s.trim().split(/\s+/);
     if (parts.length < 2) return null;
     const root = NOTE_NAME_TO_PC[parts[0]];
     if (root == null) return null;
-    // ^min matches "minor", "Minor" AND the abbreviated "min" — an
-    // abbreviating producer must not silently flip the key to Major
-    // (the Notes-surface key overlay derives from this).
     const scale = /^min/i.test(parts[1]) ? 'Minor' : 'Major';
     const intervals = scale === 'Major' ? MAJOR_INTERVALS : MINOR_INTERVALS;
     const pitchClasses = new Set(intervals.map(i => (root + i) % 12));
