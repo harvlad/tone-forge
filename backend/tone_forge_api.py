@@ -6593,7 +6593,11 @@ async def get_borrow_loops(
     session goal: donors are stretched to `target_bpm` and pitch-shifted to
     `target_key`. The host/primary song's own pads are NEVER retimed or
     transposed — the play-along recording stays true; only added parts conform.
-    With neither param the render is byte-for-byte today's."""
+    With neither param the render is byte-for-byte today's.
+
+    DONOR-ONLY: `donor == entry_id` (the blank-canvas client, which has no
+    host song, addresses the request host==donor) serves just the donor's
+    kit — source "donor", own tempo, no transpose unless a target is set."""
     from tone_forge.performance import borrow as _borrow
 
     entry = _get_history_item(entry_id)
@@ -6642,13 +6646,25 @@ async def get_borrow_loops(
     # key so borrowed harmonic material doesn't clash. Drums are gated pitchless
     # PER PAD inside render_kit_loops (one kit mixes stems).
     donor_key = target_key if target_key else host_key
-    host_job = loop.run_in_executor(
-        _render_pool(), _borrow.kit_borrow_job, entry_id, result,
-        host_bpm, "initial", None, host_name)
     donor_job = loop.run_in_executor(
         _render_pool(), _borrow.kit_borrow_job, donor, donor_result,
         donor_bpm, "donor", donor_key, donor_name)
-    host_pads, donor_pads = await asyncio.gather(host_job, donor_job)
+    if donor == entry_id:
+        # DONOR-ONLY (blank-canvas host, Projects v2): host == donor means
+        # "serve this song's curated kit as borrow pads" — there is no host
+        # song to render a block for, so skip the host job entirely instead
+        # of returning every loop twice (once "initial", once "donor").
+        # The single block keeps the "donor" tag: content-addressed
+        # BorrowRefs (and the clients' amber styling) key on it, and with
+        # no explicit target the render is at the song's own tempo with a
+        # zero-step key conform — byte-identical audio to a host render.
+        host_pads = []
+        donor_pads = await donor_job
+    else:
+        host_job = loop.run_in_executor(
+            _render_pool(), _borrow.kit_borrow_job, entry_id, result,
+            host_bpm, "initial", None, host_name)
+        host_pads, donor_pads = await asyncio.gather(host_job, donor_job)
     host_pads = host_pads or []
     donor_pads = donor_pads or []
     # padIdx must be GLOBALLY unique across the response — desktop/iOS key the

@@ -637,3 +637,109 @@ def test_key_distance_ranking(tmp_path, monkeypatch):
     assert ids[0] == "exact"
     assert "clash" not in ids
     assert ids.index("fifth") < ids.index("semi")   # fifth outranks semitone
+
+
+# --- /borrow route: donor-only (blank-canvas host==donor) -------------------
+#
+# Projects v2 blank canvas: a client with NO host song addresses the borrow
+# request host==donor. The route must serve JUST the donor's kit ("donor"
+# tag, one render job) instead of rendering the same song twice; a normal
+# host!=donor borrow keeps both blocks with donor renumbered after host.
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+import tone_forge_api  # noqa: E402
+
+_route_client = TestClient(tone_forge_api.app)
+
+
+def _route_entry(eid):
+    return {"id": eid, "name": f"Song {eid}", "result": {
+        "tempo_bpm": 120.0, "detected_key": "C major",
+        "downbeats_s": [0.0, 2.0, 4.0, 6.0],
+        "stems_paths": {"drums": f"/x/{eid}-drums.wav"}}}
+
+
+def _install_route_fakes(monkeypatch, entries, calls):
+    """Point the /borrow route at fake history + a recording render job."""
+    monkeypatch.setattr(
+        tone_forge_api, "_get_history_item",
+        lambda eid: entries.get(eid))
+    monkeypatch.setattr(
+        tone_forge_api, "_refresh_r2_stem_urls", lambda result: None)
+    # None = asyncio's default (thread) executor — no process pool, so the
+    # fake below doesn't need to be picklable.
+    monkeypatch.setattr(tone_forge_api, "_render_pool", lambda: None)
+
+    def fake_kit_borrow_job(source_id, source_result, target_bpm,
+                            source_tag="donor", target_key=None,
+                            source_name=None, pad_base=0, pads=12):
+        calls.append({"sourceId": source_id, "tag": source_tag,
+                      "bpm": target_bpm, "key": target_key})
+        # Two pads per block, padIdx from 0 per job (as the real renderer
+        # does) so the route's global renumbering is what's under test.
+        return [{
+            "padIdx": i,
+            "name": f"{source_tag} loop {i}",
+            "family": "mixed",
+            "source": source_tag,
+            "sourceName": source_name or "",
+            "stem": "drums", "stemRole": "drums",
+            "loopable": True, "loopPointSec": 0, "loopScore": 1.0,
+            "defaultQuantize": "1 bar",
+            "sampleFile": f"borrow_{'ab' if source_tag == 'donor' else 'cd'}{i}.wav",
+            "sourceLoopStartSec": float(i), "sourceLoopEndSec": float(i + 2),
+            "transposeSemis": 0,
+        } for i in range(2)]
+
+    monkeypatch.setattr(borrow, "kit_borrow_job", fake_kit_borrow_job)
+
+
+def test_borrow_route_donor_only_when_host_is_donor(monkeypatch):
+    calls = []
+    _install_route_fakes(monkeypatch, {"a": _route_entry("a")}, calls)
+
+    r = _route_client.get("/api/song/a/borrow",
+                          params={"donor": "a", "stem": "drums"})
+    assert r.status_code == 200
+    pack = r.json()
+
+    # ONE render job — the donor's — never a duplicated host block.
+    assert [c["tag"] for c in calls] == ["donor"]
+    assert calls[0]["sourceId"] == "a"
+    # No explicit target: rendered at the song's own tempo, key-conform to
+    # its own key (a zero-step transpose inside the renderer).
+    assert calls[0]["bpm"] == 120.0
+    assert calls[0]["key"] == "C major"
+
+    pads = pack["pads"]
+    assert pads and all(p["source"] == "donor" for p in pads)
+    assert [p["padIdx"] for p in pads] == list(range(len(pads)))
+    assert all(p["sampleUrl"].startswith("/api/song/a/borrow-sample/")
+               for p in pads)
+    assert pack["packId"] == "borrow-a-drums"
+
+
+def test_borrow_route_host_plus_donor_unchanged(monkeypatch):
+    calls = []
+    _install_route_fakes(
+        monkeypatch, {"a": _route_entry("a"), "b": _route_entry("b")}, calls)
+
+    r = _route_client.get("/api/song/a/borrow",
+                          params={"donor": "b", "stem": "drums"})
+    assert r.status_code == 200
+    pads = r.json()["pads"]
+
+    # Both blocks rendered: host first (initial, never key-conformed),
+    # donor conformed to the host key.
+    tags = {c["tag"]: c for c in calls}
+    assert set(tags) == {"initial", "donor"}
+    assert tags["initial"]["sourceId"] == "a"
+    assert tags["initial"]["key"] is None
+    assert tags["donor"]["sourceId"] == "b"
+    assert tags["donor"]["key"] == "C major"
+
+    # Global renumbering: initial block then donor block, contiguous.
+    assert [p["source"] for p in pads] == \
+        ["initial", "initial", "donor", "donor"]
+    assert [p["padIdx"] for p in pads] == [0, 1, 2, 3]
