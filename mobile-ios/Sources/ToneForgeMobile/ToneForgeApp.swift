@@ -860,8 +860,8 @@ public final class AppState: ObservableObject {
         sampleBus.attach(destination: audioEngine.chopBusInput)
         #endif
         sampleVoicePool.attach()
-        // Click track — straight to the main mixer (monitoring aid; no
-        // shared reverb, no layer fader — D-013 rationale in Metronome).
+        // Click track — the post-tap monitor stage (audible, never on
+        // session-audio takes; no shared reverb, no layer fader — D-013).
         metronome.attach()
 
         // Before start(), so a restart during boot is covered too.

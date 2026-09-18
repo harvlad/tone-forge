@@ -51,4 +51,18 @@ struct DocumentPickerView: UIViewControllerRepresentable {
     }
 }
 
+
+/// Export twin of DocumentPickerView: "Save to Files" for a finished
+/// audio take. `asCopy: true` writes a copy wherever the user picks —
+/// the take in the app's store is untouched.
+struct DocumentExportView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+}
+
 #endif

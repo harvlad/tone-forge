@@ -288,9 +288,12 @@ public final class Metronome {
         guard !attached else { return }
         #if canImport(AVFoundation)
         engine.engine.attach(player)
+        // Monitor stage, NOT the main mixer: the click joins after the
+        // recording tap (AudioEngine.monitorMixNode), so it's audible
+        // while playing but never printed on a session-audio take.
         engine.engine.connect(
             player,
-            to: engine.engine.mainMixerNode,
+            to: engine.monitorMixNode,
             format: engine.canonicalFormat
         )
         rebuildBuffers()

@@ -138,9 +138,29 @@ public final class AudioEngine: ObservableObject {
     private var fxReturnMixer: AVAudioMixerNode?
     private var masterEQ: AVAudioUnitEQ?
     private var masterComp: AVAudioUnitEffect?
-    /// Always-on safety brickwall limiter, last node before outputNode.
-    /// Independent of the user-shaped `masterComp` — catches summing overs.
+    /// Always-on safety brickwall limiter, last node before the monitor
+    /// mix. Independent of the user-shaped `masterComp` — catches summing
+    /// overs.
     private var masterLimiter: AVAudioUnitEffect?
+    /// Post-tap monitor stage: limiter → monitorMixer → outputNode.
+    /// Monitoring-only sources (the metronome click) join HERE so they are
+    /// audible but excluded from session-audio recordings.
+    private var monitorMixer: AVAudioMixerNode?
+
+    /// Where monitoring-only sources connect. Created + attached ON
+    /// DEMAND: the metronome attaches during boot BEFORE
+    /// buildMasterFXGraph runs, so a nil-fallback to mainMixer here
+    /// would silently route the click upstream of the recording tap
+    /// (printed on takes — the exact bug this stage exists to fix).
+    /// buildMasterFXGraph wires the same node into limiter → monitor →
+    /// outputNode before engine.start(), which gives it an output path.
+    public var monitorMixNode: AVAudioNode {
+        if let monitorMixer { return monitorMixer }
+        let monitor = AVAudioMixerNode()
+        engine.attach(monitor)
+        monitorMixer = monitor
+        return monitor
+    }
 
     /// The last TAPPABLE node of the master chain — what feeds outputNode.
     /// outputNode itself refuses recording taps (installTapOnBus throws an
@@ -367,13 +387,22 @@ public final class AudioEngine: ObservableObject {
         // A/B kill-switch for diagnosing the sim audio stutter / 15s stop.
         // When false, wire the original mainMixer → eq → comp → out path
         // and skip the performance-FX insert entirely.
+        // Monitor mix: the last hop before outputNode. The recording tap
+        // lives on the limiter (masterTapNode), so anything joining HERE is
+        // audible but never printed on a take — the metronome click routes
+        // in at this stage (a monitoring aid must not end up on recordings).
+        // monitorMixNode creates-and-attaches on first access; the
+        // metronome may already be connected into it from bootAudio.
+        let monitor = monitorMixNode
+
         guard Self.enablePerformanceFX else {
             engine.disconnectNodeOutput(engine.mainMixerNode)
             let format = canonicalFormat
             engine.connect(engine.mainMixerNode, to: eq, format: format)
             engine.connect(eq, to: comp, format: format)
             engine.connect(comp, to: limiter, format: format)
-            engine.connect(limiter, to: engine.outputNode, format: format)
+            engine.connect(limiter, to: monitor, format: format)
+            engine.connect(monitor, to: engine.outputNode, format: format)
             setCompressorParams(FXCompParams.neutral)
             self.masterEQ = eq
             self.masterComp = comp
@@ -418,7 +447,8 @@ public final class AudioEngine: ObservableObject {
         engine.connect(perfGate, to: eq, format: format)
         engine.connect(eq, to: comp, format: format)
         engine.connect(comp, to: limiter, format: format)
-        engine.connect(limiter, to: engine.outputNode, format: format)
+        engine.connect(limiter, to: monitor, format: format)
+        engine.connect(monitor, to: engine.outputNode, format: format)
 
         // Set initial compressor params (bypassed — amountDb 0 = infinite headroom)
         setCompressorParams(FXCompParams.neutral)

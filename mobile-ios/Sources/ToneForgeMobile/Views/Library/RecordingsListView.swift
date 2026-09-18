@@ -34,6 +34,8 @@ struct RecordingsListView: View {
     /// Wraps the URL of the just-rendered m4a so `.sheet(item:)` can
     /// present a UIActivityViewController with the exported file.
     @State private var m4aShareItem: ShareFileItem? = nil
+    /// "Save to Files" target — presents the export document picker.
+    @State private var takeExportItem: ShareFileItem? = nil
 
     var body: some View {
         List {
@@ -48,6 +50,9 @@ struct RecordingsListView: View {
         #if canImport(UIKit)
         .sheet(item: $m4aShareItem) { item in
             ActivityShareSheet(activityItems: [item.url])
+        }
+        .sheet(item: $takeExportItem) { item in
+            DocumentExportView(url: item.url)
         }
         #endif
     }
@@ -131,6 +136,13 @@ struct RecordingsListView: View {
                     m4aShareItem = ShareFileItem(url: take.fileURL)
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")
+                }
+                // Explicit download-to-device: one tap to the Files
+                // save sheet instead of hunting it inside Share.
+                Button {
+                    takeExportItem = ShareFileItem(url: take.fileURL)
+                } label: {
+                    Label("Save to Files", systemImage: "folder.badge.plus")
                 }
                 #endif
                 Button("Delete", role: .destructive) {
