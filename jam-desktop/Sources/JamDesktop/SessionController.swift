@@ -2206,7 +2206,7 @@ final class SessionController: ObservableObject {
             SessionDataFrame(
                 song: .init(id: bundle.analysisId, title: bundle.meta.title),
                 bpm: bundle.meta.tempoBpm,
-                chordProgression: bundle.timeline.chords.map {
+                chordProgression: bundle.timeline.richestChordLane.map {
                     .init(symbol: $0.symbol, startS: $0.start, endS: $0.end)
                 },
                 sectionMarkers: bundle.timeline.sections.map {

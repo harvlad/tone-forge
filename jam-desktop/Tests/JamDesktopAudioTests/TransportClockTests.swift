@@ -108,4 +108,58 @@ final class TransportClockTests: XCTestCase {
         host.advance(seconds: 1)
         XCTAssertEqual(clock.nowSongSeconds, 2.0, accuracy: 0.001)
     }
+
+    // MARK: - Output-latency compensation
+
+    func testOutputLatencyRetardsHeardPosition() {
+        clock.setOutputLatency(0.2)   // 200 ms of output/DAC latency
+        clock.play()
+        host.advance(seconds: 2)
+        // Rendered 2.0s but the listener hears 0.2s behind → 1.8s.
+        XCTAssertEqual(clock.nowSongSeconds, 1.8, accuracy: 0.001)
+    }
+
+    func testOutputLatencyScalesWithRate() {
+        clock.setOutputLatency(0.2)
+        clock.setRate(0.5)
+        clock.play()
+        host.advance(seconds: 4)      // 2.0 raw song-seconds at rate 0.5
+        // Latency is 0.2 real seconds = 0.1 song-seconds at rate 0.5.
+        XCTAssertEqual(clock.nowSongSeconds, 1.9, accuracy: 0.001)
+    }
+
+    func testOutputLatencyDoesNotAffectPausedPosition() {
+        clock.setOutputLatency(0.2)
+        clock.play()
+        host.advance(seconds: 2)
+        clock.pause()
+        // Paused playhead parks at the RAW position — no latency term,
+        // and no double-count on resume.
+        XCTAssertEqual(clock.nowSongSeconds, 2.0, accuracy: 0.001)
+        clock.play()
+        host.advance(seconds: 1)
+        // Playing again → 3.0 raw − 0.2 latency.
+        XCTAssertEqual(clock.nowSongSeconds, 2.8, accuracy: 0.001)
+    }
+
+    func testOutputLatencyIgnoredWhenStopped() {
+        clock.setOutputLatency(0.5)
+        XCTAssertEqual(clock.nowSongSeconds, 0)
+    }
+
+    // MARK: - Render-clock provider
+
+    /// The production initializer drives position off an injected
+    /// seconds source (the audio render clock in the app). Advancing
+    /// the source advances the song position 1:1 at unity rate.
+    func testMonotonicSecondsProviderDrivesPosition() {
+        final class FakeRender: @unchecked Sendable { var seconds = 100.0 }
+        let render = FakeRender()
+        let renderClock = TransportClock(monotonicSecondsProvider: { render.seconds })
+        renderClock.play()
+        render.seconds += 3.0
+        XCTAssertEqual(renderClock.nowSongSeconds, 3.0, accuracy: 0.001)
+        renderClock.setOutputLatency(0.25)
+        XCTAssertEqual(renderClock.nowSongSeconds, 2.75, accuracy: 0.001)
+    }
 }

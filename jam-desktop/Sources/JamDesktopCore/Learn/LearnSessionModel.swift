@@ -87,7 +87,9 @@ public final class LearnSessionModel {
     public func configure(bundle: SongBundle?) {
         if phase == .practicing { stopPractice() }
         sections = bundle?.timeline.sections ?? []
-        chords = (bundle?.timeline.chords ?? []).sorted { $0.start < $1.start }
+        // Richest per-stem lane, not the sparse legacy "other" lane, so
+        // the Learn fretboard walks the song's real progression.
+        chords = (bundle?.timeline.richestChordLane ?? []).sorted { $0.start < $1.start }
         analysisId = bundle?.analysisId
         cachedProgress = nil
         cachedAnalysisId = nil

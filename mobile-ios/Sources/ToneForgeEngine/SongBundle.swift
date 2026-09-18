@@ -11,10 +11,11 @@
 //     "analysisId": "…",
 //     "meta": { title, artist, sourceUrl, durationSec, tempoBpm, detectedKey },
 //     "timeline": {
-//       "chords":    [{start, end, symbol}],
-//       "sections":  [{start, end, label?}],
-//       "beats":     [Double],
-//       "downbeats": [Double]
+//       "chords":       [{start, end, symbol}],
+//       "chordsByStem": {stem: [{start, end, symbol}]},   // additive, optional
+//       "sections":     [{start, end, label?}],
+//       "beats":        [Double],
+//       "downbeats":    [Double]
 //     },
 //     "stems": [{role, url, codec, sampleRateHz}],
 //     "presets": {
@@ -117,17 +118,30 @@ public struct BundleMeta: Codable, Sendable, Equatable {
 
 public struct BundleTimeline: Codable, Sendable, Equatable {
     public let chords: [ChordEvent]
+    /// Per-stem chord lanes keyed by stem role (e.g. "guitar", "bass",
+    /// "other"). Additive/optional: nil on bundles cached before the
+    /// server emitted it, and on legacy analyses with no per-stem
+    /// harmony. The flat `chords` above is the legacy single ("other")
+    /// lane; the native chord surfaces pick the RICHEST lane out of
+    /// this dict (see JamDesktopCore `richestChordLane`) so they follow
+    /// the song the way the web client already does — the residual
+    /// "other" lane is often sparse while a guitar lane carries the
+    /// real progression. Synthesized decoding treats the missing key
+    /// as nil, so old on-disk bundles still read.
+    public let chordsByStem: [String: [ChordEvent]]?
     public let sections: [SectionEvent]
     public let beats: [Double]
     public let downbeats: [Double]
 
     public init(
         chords: [ChordEvent] = [],
+        chordsByStem: [String: [ChordEvent]]? = nil,
         sections: [SectionEvent] = [],
         beats: [Double] = [],
         downbeats: [Double] = []
     ) {
         self.chords = chords
+        self.chordsByStem = chordsByStem
         self.sections = sections
         self.beats = beats
         self.downbeats = downbeats
