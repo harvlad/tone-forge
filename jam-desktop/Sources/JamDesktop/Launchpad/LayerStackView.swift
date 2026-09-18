@@ -2,14 +2,16 @@ import SwiftUI
 import JamDesktopCore
 
 /// A per-category rack for building a groove by hand: one row per musical layer
-/// (Drums/Bass/Chords/Lead/Texture/Vocal), each showing the active loop with a
-/// swap menu + play/stop. Complements Instant Groove (auto-fill). Layers loop
-/// bar-synced via the LaunchpadController loop path.
+/// (Drums/Bass/Chords/Synth/Lead/Texture/Vocal), each showing the active loop
+/// with a swap menu + play/stop. Complements Instant Groove (auto-fill). Layers
+/// loop bar-synced via the LaunchpadController loop path. Synth: on a 6-stem
+/// song the harmonic body lives in the SYNTH category (server-explicit,
+/// Chop.category) — without a row that material would be unrackable.
 struct LayerStackView: View {
     @EnvironmentObject private var session: SessionController
     private var launchpad: LaunchpadController { session.launchpad }
     private let categories: [LaunchpadController.PadCategory] =
-        [.drums, .bass, .chords, .lead, .texture, .vocal]
+        [.drums, .bass, .chords, .synth, .lead, .texture, .vocal]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

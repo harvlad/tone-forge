@@ -193,6 +193,10 @@ final class ProjectCoordinator: ObservableObject {
             // the PREVIOUS song's workspace — its pack pads surfaced as
             // phantom tiles on every song that lacked a project of its
             // own (D-034).
+            // A pattern still running on a slot about to vanish would
+            // sound on with no pad able to stop it (the orphaned-voice
+            // class of bug) — stop sequences before the swap (D-035).
+            session.sequencePadManager.stopAll()
             suppressAutoSave = true
             ProjectStateBridge.activateFresh(
                 padAssignments: session.padAssignmentStore,

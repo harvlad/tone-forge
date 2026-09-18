@@ -139,9 +139,12 @@ public final class LaunchpadController {
     public enum PadCategory: String, CaseIterable, Sendable {
         case drums = "DRUMS", bass = "BASS", chords = "CHORDS", lead = "LEAD"
         case vocal = "VOCAL", rhythm = "RHYTHM", texture = "TEXTURE"
-        case fx = "FX", stab = "STAB", sample = "SAMPLE"
+        case fx = "FX", stab = "STAB", sample = "SAMPLE", synth = "SYNTH"
 
-        /// 0xRRGGBB accent per category for the pad grid.
+        /// 0xRRGGBB accent per category for the pad grid — value-identical
+        /// to the backend's `_CATEGORY_HEX` (kit_builder.py), which stamps
+        /// the same hex into every kit pad's colorHint so all surfaces
+        /// render one palette.
         public var colorHex: Int {
             switch self {
             case .drums: return 0xEF4444
@@ -154,6 +157,7 @@ public final class LaunchpadController {
             case .fx: return 0xA855F7
             case .stab: return 0x8B5CF6
             case .sample: return 0x64748B
+            case .synth: return 0x14B8A6
             }
         }
     }
@@ -169,9 +173,23 @@ public final class LaunchpadController {
         case "drums":  return .drums
         case "bass":   return .bass
         case "vocals": return .vocal
-        case "synth":  return .texture   // 6s `other` residual = synth proxy
+        case "synth":  return .synth    // 6s `other` residual, own category
         default:       return .chords   // "other"/unknown = chords/harmonic
         }
+    }
+
+    /// Category for an assignment: the SERVER'S category when the chop
+    /// carries one (kit grids — the only way a residual-`other` SYNTH pad
+    /// can categorize correctly, since stem+contentType alone can't see the
+    /// graph's `residual_is_synth` flag), else derived from stem +
+    /// contentType exactly as before.
+    public static func category(for assignment: PadAssignment) -> PadCategory {
+        if let raw = assignment.chop.category,
+           let explicit = PadCategory(rawValue: raw) {
+            return explicit
+        }
+        return category(stem: assignment.stem,
+                        contentType: assignment.chop.contentType)
     }
 
     public static func category(stem: String, contentType: String?) -> PadCategory {
@@ -179,7 +197,7 @@ public final class LaunchpadController {
         case "drums": return .drums
         case "bass": return .bass
         case "vocals": return .vocal
-        case "synth": return .texture   // 6s `other` residual = synth proxy
+        case "synth": return .synth    // 6s `other` residual, own category
         default: break
         }
         switch contentType {
@@ -196,7 +214,7 @@ public final class LaunchpadController {
 
     public func category(for pad: LaunchpadPad) -> PadCategory? {
         guard let a = assignments[pad] else { return nil }
-        return Self.category(stem: a.stem, contentType: a.chop.contentType)
+        return Self.category(for: a)
     }
 
     /// Human label for a pad — the descriptive kit name ("Chorus Guitar riff"),
@@ -215,11 +233,15 @@ public final class LaunchpadController {
         // stop the moment nothing "holds" it), and a re-tap must toggle a
         // groove layer off.
         playbackMode = .latch
-        let targets: [PadCategory] = [.drums, .bass, .chords, .lead, .rhythm, .texture]
+        // .synth included: on a 6-stem song the harmonic body lives in the
+        // SYNTH category — without it, Instant Groove would skip that
+        // material entirely now that those pads no longer fall to
+        // lead/chords/texture.
+        let targets: [PadCategory] = [.drums, .bass, .chords, .synth, .lead, .rhythm, .texture]
         var best: [PadCategory: LaunchpadPad] = [:]
         var bestScore: [PadCategory: Double] = [:]
         for (pad, a) in assignments {
-            let cat = Self.category(stem: a.stem, contentType: a.chop.contentType)
+            let cat = Self.category(for: a)
             let score = a.chop.performanceScore ?? a.chop.loopScore ?? 0
             if score > (bestScore[cat] ?? -1) {
                 best[cat] = pad
@@ -239,7 +261,7 @@ public final class LaunchpadController {
     /// swap menu for a layer row.
     public func pads(in category: PadCategory) -> [LaunchpadPad] {
         assignments.compactMap { (pad, a) -> (LaunchpadPad, Double)? in
-            guard Self.category(stem: a.stem, contentType: a.chop.contentType) == category else { return nil }
+            guard Self.category(for: a) == category else { return nil }
             return (pad, a.chop.performanceScore ?? a.chop.loopScore ?? 0)
         }
         .sorted { $0.1 > $1.1 }
@@ -361,12 +383,27 @@ public final class LaunchpadController {
             if padCount < oldValue { silenceOutOfRange() }
             // A mounted borrow RE-ARRANGES at the new capacity (16 =
             // best-of-both, 64 = full) rather than clipping the 64 view and
-            // dropping the donor. Non-borrow grids just repaint.
-            if borrowMounts != nil { applyBorrowLayout(at: padCount) }
+            // dropping the donor. Every OTHER grid tells the host, which
+            // refetches a pack-kit grid at the new count (web parity:
+            // kit.js setPadCount → reloadKit — the 64-pad flood is built
+            // server-side, never subset client-side).
+            if borrowMounts != nil {
+                applyBorrowLayout(at: padCount)
+            } else {
+                onPadCountChanged?(padCount)
+            }
             repaint()
             onSurfaceSettingChanged?()
         }
     }
+
+    /// Fired when the 16/64 surface size changes on a NON-borrow grid — the
+    /// host re-runs the kit fetch at the new count when a backend kit is
+    /// mounted (web kit.js `setPadCount → reloadKit` parity). Never fires
+    /// for a mounted borrow: that grid re-arranges locally
+    /// (`applyBorrowLayout`) and must not be clobbered by an auto-kit
+    /// refetch.
+    @ObservationIgnored public var onPadCountChanged: ((Int) -> Void)?
 
     /// Whether `pad` is within the current `padCount` window (idx < count),
     /// i.e. visible on screen and lit on hardware. Pads are numbered
@@ -740,8 +777,20 @@ public final class LaunchpadController {
         assignments = next
         borrowSourceLabels = [:]   // a fresh single-song grid drops borrow labels
         borrowMounts = nil         // …and the toggle stops re-arranging a borrow
+        isKitGridMounted = false   // …and the 16/64 toggle stops refetching kits
         repaint()
     }
+
+    /// True while the mounted grid came from a backend KIT manifest
+    /// (`adoptAssignments` — auto/drum/flip/donor kits). Cleared by any
+    /// chop-grid swap (`setChops`/`applyEdits` — the panel's stem/sliceMode
+    /// picker mounts these WITHOUT the host session knowing) and by a
+    /// borrow mount. The 16/64 resize refetch must key on THIS, not on the
+    /// host's `activeGridPackId`: that id is set on every song attach
+    /// (auto kit) and nothing nils it when the panel loads a chop grid, so
+    /// the stale id turned a display-only toggle into a silent
+    /// chop-grid → auto-kit replacement.
+    public private(set) var isKitGridMounted = false
 
     /// Adopt a MULTI-STEM assignment set (Performance-Intelligence auto-kit):
     /// each pad is a (chop, stem) pair spanning different stems, laid out
@@ -761,6 +810,7 @@ public final class LaunchpadController {
         assignments = next
         borrowSourceLabels = [:]
         borrowMounts = nil
+        isKitGridMounted = true
         repaint()
     }
 
@@ -811,6 +861,7 @@ public final class LaunchpadController {
     /// re-arranges (16 = best-of-both) rather than hiding the donor.
     public func adoptBorrowAssignments(_ mounts: [BorrowMount]) {
         borrowMounts = mounts
+        isKitGridMounted = false   // borrow grids re-arrange locally, never refetch
         // Borrow opens on the full grid. Setting padCount fires the didSet,
         // which applies the layout; if already 64 the didSet is a no-op, so lay
         // it out explicitly here.
@@ -1256,19 +1307,37 @@ public final class LaunchpadController {
     /// colorHint while the screen painted musical-category colors
     /// (and borrow grids lit as flat blue/amber source tints on
     /// hardware — the same "one color block" class of bug 22bd58b6
-    /// fixed on screen). Mirrors LaunchpadPanelView.fillColor's
-    /// borrow → category → raw-hint precedence; pinned by
-    /// LaunchpadControllerTests so the two paths can't drift again.
+    /// fixed on screen). Precedence: borrow tint → verbatim kit hint →
+    /// category accent → raw hint; LaunchpadPanelView.fillColor reads
+    /// THIS value, pinned by LaunchpadControllerTests +
+    /// KitGridFloodTests so the two paths can't drift again.
     public func displayColorHint(
         for assignment: PadAssignment, at pad: LaunchpadPad
     ) -> UInt32 {
         if borrowSourceLabels[pad] != nil {
             return UInt32(Self.borrowCategory(forStem: assignment.stem).colorHex)
         }
-        if assignment.chop.contentType != nil {
-            return UInt32(Self.category(
-                stem: assignment.stem, contentType: assignment.chop.contentType
-            ).colorHex)
+        // Kit-manifest pads (explicit server category): web paints
+        // parseColor(pad.colorHint) VERBATIM (kit.js buildPadTile), and
+        // kind=drums kits depend on that — every pad carries category
+        // "DRUMS" but PER-CLASS hints (kick red, snare amber, hats cyan,
+        // grooves blue; drum_kit.py _CLASS_HEX). Category-first flattened
+        // the whole drum kit into one red block (the 22bd58b6 bug class).
+        // The category color is only the fallback for an absent or
+        // unparseable hint. Residual-`other` → SYNTH still lands teal:
+        // kit_builder stamps _CATEGORY_HEX teal into that pad's hint.
+        if assignment.chop.category != nil,
+           let hint = Self.parseColorHint(assignment.chop.colorHint) {
+            return hint
+        }
+        // Riley chop pads (contentType, no manifest category) keep the
+        // category accent AHEAD of the chop's own hint — web's chop bake
+        // does the same (kit.js CHOP_CATEGORY_HEX[cat]; the chops route
+        // sends CSS names like "red" that hex parsers reject anyway).
+        // Also the unparseable-hint fallback for kit pads, where the
+        // explicit category wins inside category(for:).
+        if assignment.chop.category != nil || assignment.chop.contentType != nil {
+            return UInt32(Self.category(for: assignment).colorHex)
         }
         return colorHint(for: assignment)
     }

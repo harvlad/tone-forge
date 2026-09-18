@@ -384,6 +384,16 @@ final class SessionController: ObservableObject {
 
         launchpad.sequencePadManager = sequencePadManager
         launchpad.padAssignmentStore = padAssignmentStore
+        // 16/64 toggle = web kit.js setPadCount → reloadKit: refetch the
+        // SERVER-built kit at the new count (the 64-pad flood — stems ×
+        // sections, category-grouped, "Drums beat Verse" labels — is built
+        // by /api/song/{id}/kit, never subset client-side). Only pack-kit
+        // grids refetch: preset/fetched chop grids already hold up to 64
+        // chops locally, and a mounted borrow re-arranges inside the
+        // controller (the hook doesn't fire for it).
+        launchpad.onPadCountChanged = { [weak self] _ in
+            Task { await self?.reloadKitForPadCountChange() }
+        }
         // On-pad waveforms + sequence step dots (mobile/plugin parity).
         launchpad.padPeaksProvider = { [weak self] pad in
             guard let self, let a = self.launchpad.assignments[pad]
@@ -1079,9 +1089,13 @@ final class SessionController: ObservableObject {
     /// `announce: false` for programmatic loads (song-attach Auto Kit, the
     /// Re-Drum pads follow-up) — only a user-initiated kit tap should
     /// write the Remix sheet's "Applied:" confirmation.
+    /// `yieldToBorrow: true` for automatic reloads (the 16/64 resize): if a
+    /// borrow grid mounts while the fetch is in flight (a workspace restore
+    /// re-deriving its borrows), the reload yields instead of clobbering
+    /// it. Explicit kit taps keep replacing a borrow, as always.
     @MainActor
     func loadAutoKit(skill: String = "intermediate", kind: String? = nil,
-                     announce: Bool = true) async {
+                     announce: Bool = true, yieldToBorrow: Bool = false) async {
         guard let analysisId = attachedAnalysisId, let base = backendBaseURL else {
             autoKitError = "No song loaded."
             return
@@ -1093,12 +1107,19 @@ final class SessionController: ObservableObject {
         let kitKind = kind ?? lastKitKind
         lastKitKind = kitKind
         defer { autoKitLoading = false }
+        // Ask for exactly as many pads as the surface shows (16 compact /
+        // 64 full) — web parity: kit.js resolves padCount then fetches
+        // /kit?pads=<count>, so the 64 grid arrives FULLY FLOODED from the
+        // server (stems × sections, category-grouped rows). The old
+        // hard-coded 16 predates the backend lifting its pads clamp and
+        // left 48 dead cells in 64 mode.
+        let requestedPads = launchpad.padCount
         do {
-            // 16 ranked pads (the builder's named role slots + top-ups) —
-            // the default 8 under-filled a 64-cell grid. Retries transient
-            // failures with a short backoff before surfacing the error.
+            // Retries transient failures with a short backoff before
+            // surfacing the error.
             let pack = try await Self.fetchKitWithRetry(
                 base: base, analysisId: analysisId, skill: skill, kind: kitKind,
+                pads: requestedPads,
                 stillCurrent: { [weak self] in
                     self?.attachedAnalysisId == analysisId
                 })
@@ -1109,41 +1130,13 @@ final class SessionController: ObservableObject {
             // onTrigger plays the file. Failures keep the stemSlice path.
             let sampleFiles = await Self.downloadKitSamples(pack: pack, base: base)
             guard attachedAnalysisId == analysisId else { return }
+            if yieldToBorrow, activeBorrowContext != nil { return }
             drumKitSampleFiles = sampleFiles
             // The kit's pads are stem slices, not files — so drive the chop-based
-            // Launchpad grid: each pad → (Chop, stem). Loopable pads get kind
-            // "phrase" so onTrigger loops them seamlessly (SeamlessLoop crossfade).
-            let pairs: [(chop: Chop, stem: String)] = pack.pads.compactMap { pad in
-                guard let slice = pad.stemSlice else { return nil }
-                let loopable = pad.loopable ?? ((pad.loopScore ?? 0) >= 0.55)
-                let chop = Chop(
-                    idx: pad.padIdx,
-                    startSec: slice.startSec,
-                    endSec: slice.endSec,
-                    durationSec: max(0, slice.endSec - slice.startSec),
-                    kind: loopable ? "phrase" : "chord",
-                    // Descriptive kit name ("Chorus Guitar riff") shown on the pad.
-                    sectionLabel: pad.name,
-                    colorHint: pad.colorHint,
-                    // Carry the kit metadata so the grid can group/color by
-                    // category and Instant Groove can pick the best per role.
-                    contentType: pad.contentType,
-                    performanceScore: pad.performanceScore,
-                    difficulty: pad.difficulty,
-                    loopable: pad.loopable,
-                    loopScore: pad.loopScore,
-                    // Carry the analyzer's measured seam crossfade so held
-                    // loops use it (else SessionController's 15 ms floor).
-                    crossfadeMs: pad.crossfadeMs,
-                    // Usage feedback loop keys on the graph-asset id. Kit
-                    // pads with a downloaded clean composite carry the
-                    // `drumfile:` sentinel instead — onTrigger routes them
-                    // to the file player, and pad-usage skips them.
-                    assetId: sampleFiles[pad.padIdx] != nil
-                        ? "drumfile:\(pad.padIdx)" : pad.assetId
-                )
-                return (chop, slice.stemRole)
-            }
+            // Launchpad grid: each pad → (Chop, stem), in SERVER order
+            // (KitGridMapper — pure + test-pinned; loopable pads get kind
+            // "phrase" so onTrigger loops them seamlessly).
+            let pairs = KitGridMapper.pairs(pack: pack, sampleFiles: sampleFiles)
             launchpad.adoptAssignments(pairs)
             // FX keys resolve against this kit's identity; a non-borrow
             // grid also retires any mounted borrow context.
@@ -1175,6 +1168,18 @@ final class SessionController: ObservableObject {
                 default:
                     remixApplied =
                         "Applied: Auto Kit — the song's best loops are on the pads. Tap a pad to hear them."
+                }
+            }
+            // The 16/64 toggle can move while a fetch is in flight (its own
+            // reload request is dropped by the autoKitLoading guard above) —
+            // catch up so the mounted kit always matches the surface size.
+            // Bounded: the follow-up fetches at the CURRENT count, and runs
+            // only after this call's autoKitLoading clears.
+            if launchpad.padCount != requestedPads {
+                Task { [weak self] in
+                    await self?.loadAutoKit(
+                        skill: skill, kind: kitKind, announce: false,
+                        yieldToBorrow: true)
                 }
             }
         } catch is CancellationError {
@@ -1226,12 +1231,35 @@ final class SessionController: ObservableObject {
         return out
     }
 
+    /// The 16/64 resize reload (web `setPadCount → reloadKit`). Guards run
+    /// HERE, at Task time, not only at schedule time: a workspace restore
+    /// can mount a borrow between the toggle and this Task executing.
+    /// Only pack-kit grids reload — preset/fetched chop grids already hold
+    /// their full chop set locally, and a mounted borrow re-arranges
+    /// inside the controller (its hook never fires anyway).
+    ///
+    /// The kit test is the CONTROLLER's `isKitGridMounted`, never
+    /// `activeGridPackId` alone: the panel's stem/sliceMode Load mounts a
+    /// chop grid behind this session's back (launchpad.loadChops →
+    /// setChops) and nothing nils the pack id — which the attach-time
+    /// auto kit sets on EVERY song — so the stale id made this toggle
+    /// silently replace a user-loaded chop grid with a refetched auto
+    /// kit. Same staleness class the FX path guards per-pad
+    /// (`effectsForPad`'s assetId check).
+    @MainActor
+    private func reloadKitForPadCountChange() async {
+        guard attachedAnalysisId != nil, activeGridPackId != nil,
+              launchpad.isKitGridMounted,
+              activeBorrowContext == nil else { return }
+        await loadAutoKit(announce: false, yieldToBorrow: true)
+    }
+
     /// KitClient fetch with 3 attempts and a short backoff for transient
     /// failures. Throws `CancellationError` (silently handled above) the
     /// moment `stillCurrent` reports the song changed.
     private static func fetchKitWithRetry(
         base: URL, analysisId: String, skill: String, kind: String,
-        stillCurrent: @escaping () -> Bool?
+        pads: Int, stillCurrent: @escaping () -> Bool?
     ) async throws -> SamplePack {
         var lastError: Error = URLError(.unknown)
         for attempt in 0..<3 {
@@ -1242,7 +1270,7 @@ final class SessionController: ObservableObject {
             do {
                 return try await KitClient().fetchKit(
                     baseURL: base, analysisId: analysisId, skill: skill,
-                    pads: 16, kind: kind)
+                    pads: pads, kind: kind)
             } catch {
                 lastError = error
             }

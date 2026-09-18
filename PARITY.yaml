@@ -550,12 +550,14 @@ features:
       web:
         status: done
         evidence: "backend/static/kit.js#kit-is-64"
+        note: "The 64 grid arrives FULLY FLOODED from the backend: kit.js fetches /api/song/{id}/kit?pads=64 (padCount from ?pads=/localStorage) and the 16|64 toggle refetches at the new count (setPadCount → reloadKit). AutoKitBuilder builds the whole set server-side — stems × sections top-up, category-grouped padIdx rows (kit=5+), descriptive labels ('Drums beat Verse'), _CATEGORY_HEX colorHints — the client renders pads verbatim, never subsets."
       ios:
         status: missing
         note: "iOS pad grid is 16 (4x4 Contribute + hold-radial, kVoices-style); no 8x8/64 mode — real gap, own target."
       desktop:
         status: done
-        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/LaunchpadController.swift#prefix(64)"
+        evidence: "jam-desktop/Sources/JamDesktopCore/Launchpad/KitGridMapper.swift#pairs"
+        note: "Web-parity flood: loadAutoKit fetches the SAME /kit route at pads=launchpad.padCount (was hard-coded 16 — a stale-clamp legacy that left 48 dead cells in 64 mode), the 16/64 toggle refetches via LaunchpadController.onPadCountChanged → SessionController.reloadKitForPadCountChange (kit.js setPadCount → reloadKit twin; borrow grids re-arrange locally instead and the resize reload yields if a borrow mounts mid-flight), and KitGridMapper lays the manifest verbatim — server padIdx order, labels, colors, category (incl. residual-`other` SYNTH teal via Chop.category + PadCategory.synth; screen AND hardware LEDs both paint displayColorHint). Pinned by KitGridFloodTests."
       plugin:
         status: na
         note: "jamn Kit is a fixed 16-voice sampler (kVoices=16); 8x8 is a jam-surface concept, not a sampler one."

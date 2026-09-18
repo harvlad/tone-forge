@@ -362,6 +362,22 @@ final class ProjectStateBridgeTests: XCTestCase {
         XCTAssertEqual(arrangements.captured(analysisId: "song1"), [1: [2]])
     }
 
+    /// The clear must PERSIST — the phantoms lived in UserDefaults, so an
+    /// in-memory clear alone would resurrect them on the next launch.
+    func testActivateFreshPersistsAcrossReload() {
+        padAssignments.assign(
+            .packPad(packId: "stale-pack", padIdx: 0), padIdx: 24)
+        ProjectStateBridge.activateFresh(
+            padAssignments: padAssignments, padFX: padFX)
+
+        // Fresh store instances over the same backing suite/dir = relaunch.
+        let reloadedAssignments = PadAssignmentStore(defaults: defaults)
+        let reloadedFX = PadFXStore(root: tempDir)
+        XCTAssertTrue(reloadedAssignments.assignments.isEmpty)
+        XCTAssertTrue(reloadedFX.effectsByKey.isEmpty)
+        XCTAssertNil(reloadedAssignments.slot(padIdx: 24))
+    }
+
     // MARK: - Borrow refs (content-addressed)
 
     private func borrowPad(

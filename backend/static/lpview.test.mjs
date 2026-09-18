@@ -51,6 +51,7 @@ assert.equal(I.categoryColor("nope"), null, "unknown category → null");
 assert.equal(I.categoryFor("drums", null), "DRUMS", "stem overrides type");
 assert.equal(I.categoryFor("bass", null), "BASS");
 assert.equal(I.categoryFor("vocals", null), "VOCAL");
+assert.equal(I.categoryFor("synth", null), "SYNTH", "6s residual = own category");
 assert.equal(I.categoryFor("other", "chord_loop"), "CHORDS", "type → chords");
 assert.equal(I.categoryFor("other", "one_shot"), "STAB");
 assert.equal(I.categoryFor("other", "mystery"), "SAMPLE", "default sample");
@@ -135,8 +136,13 @@ const groove = I.pickInstantGroove([
   { padIdx: 1, category: "DRUMS", performanceScore: 0.9 },
   { padIdx: 2, category: "BASS", loopScore: 0.5 },
   { padIdx: 3, category: "SAMPLE", performanceScore: 1 }, // not a groove target
+  { padIdx: 4, category: "SYNTH", performanceScore: 0.6 }, // 6-stem residual — a target
 ]);
-assert.deepEqual(groove, [1, 2], "best DRUMS (pad 1) + BASS (pad 2); SAMPLE excluded");
+assert.deepEqual(
+  groove,
+  [1, 2, 4],
+  "best DRUMS (pad 1) + BASS (pad 2) + SYNTH (pad 4); SAMPLE excluded"
+);
 
 // ---- deviceStatusLabel ------------------------------------------------
 assert.equal(I.deviceStatusLabel(null), "No device");
