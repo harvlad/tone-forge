@@ -279,7 +279,7 @@ public final class LaunchpadController {
         for pad in Array(activePads) {
             if let a = assignments[pad] {
                 onRelease?(pad, a)
-                transport?.setLight(.solid(colorHint: colorHint(for: a)), at: pad)
+                transport?.setLight(.solid(colorHint: displayColorHint(for: a, at: pad)), at: pad)
             } else {
                 transport?.setLight(.off, at: pad)
             }
@@ -630,11 +630,24 @@ public final class LaunchpadController {
     // MARK: - Wiring
 
     /// Route a hardware transport's pads through this controller and
-    /// take over its LEDs.
+    /// take over its LEDs. A transport that stamps events on its MIDI
+    /// receive thread (StampedPadTransport) delivers press-time clocks
+    /// with the pad; the controller then quantizes against the true
+    /// press instant instead of the main-queue arrival, which lags
+    /// 10–50 ms behind under UI load.
     public func attach(transport: any LaunchpadTransport) {
         self.transport = transport
-        transport.onPadDown = { [weak self] pad in self?.padDown(pad) }
-        transport.onPadUp = { [weak self] pad in self?.padUp(pad) }
+        if let stamped = transport as? StampedPadTransport {
+            stamped.onPadDownStamped = { [weak self] pad, song, host in
+                self?.padDown(pad, pressSongSeconds: song, pressHostTime: host)
+            }
+            stamped.onPadUpStamped = { [weak self] pad, _, host in
+                self?.padUp(pad, pressHostTime: host)
+            }
+        } else {
+            transport.onPadDown = { [weak self] pad in self?.padDown(pad) }
+            transport.onPadUp = { [weak self] pad in self?.padUp(pad) }
+        }
         repaint()
     }
 
@@ -859,7 +872,18 @@ public final class LaunchpadController {
 
     // MARK: - Pads
 
-    public func padDown(_ pad: LaunchpadPad) {
+    /// `pressSongSeconds`/`pressHostTime`: the clocks stamped on the
+    /// MIDI receive thread for a hardware press (nil for on-screen
+    /// taps). Quantize boundaries and phase joins are computed from
+    /// the press instant, so main-queue latency can't push a press
+    /// past a grace window or skew a join; instant (One-Shot/Follow)
+    /// fires still play ASAP — elapsed hop time is not recoverable
+    /// without cutting into the attack.
+    public func padDown(
+        _ pad: LaunchpadPad,
+        pressSongSeconds: Double? = nil,
+        pressHostTime: UInt64? = nil
+    ) {
         // Out-of-range in the current 16/64 window: a hardware press on a
         // dark pad (or a stale on-screen tap during a shrink) is a no-op,
         // so the compact view never triggers a hidden cell.
@@ -892,7 +916,7 @@ public final class LaunchpadController {
         // so they never hit the toggle-off branch), so the guard is Latch-only.
         if playbackMode.isToggle && activePads.contains(pad) {
             activePads.remove(pad)
-            transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+            transport?.setLight(.solid(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
             // Usage feedback: held >= 3 s = play, killed sooner = skip.
             if let assetId = assignment.chop.assetId,
                let started = padUsageStart.removeValue(forKey: pad) {
@@ -902,15 +926,18 @@ public final class LaunchpadController {
             onRelease?(pad, assignment)   // stop the loop
             return
         }
+        // Press instant: the receive-thread stamp when the press came
+        // from hardware (the main hop it then rode adds 10–50 ms under
+        // UI load), else the shared clock now.
+        let now = pressSongSeconds ?? nowProvider()
         // Section gate ("Play only in" — iOS SampleScheduler parity):
         // a trigger while the playhead sits in a disallowed section is
         // dropped silently. The toggle-OFF branch above is deliberately
         // NOT gated — stopping a latched loop must always work.
         guard SectionResolver.isAllowed(
-            t: nowProvider(), in: timeline?.sections ?? [],
+            t: now, in: timeline?.sections ?? [],
             allowed: sectionGate
         ) else { return }
-        let now = nowProvider()
         // Transport STOPPED: loops fire immediately and free-run
         // (mobile parity). Auto-starting the transport for a clock
         // made the first loop tap visibly toggle Play and start the
@@ -1056,8 +1083,26 @@ public final class LaunchpadController {
                 onPadUsage?(assetId, "play")
             }
         }
-        transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
+        transport?.setLight(.pulse(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
         onTrigger?(pad, assignment, fireAt, lockPhaseSeconds)
+        logPadLatency("press→trigger", pressHostTime: pressHostTime)
+    }
+
+    // MARK: - Pad latency instrumentation (debug flag)
+
+    /// JAM_PAD_LATENCY_LOG=1: print the receive-thread → trigger-
+    /// dispatch delta for hardware pads, so the main-hop cost is
+    /// measurable on a real device (CI can't attach hardware — the
+    /// tests pin the math/wiring; this pins the numbers).
+    static let latencyLogEnabled =
+        ProcessInfo.processInfo.environment["JAM_PAD_LATENCY_LOG"] == "1"
+
+    private func logPadLatency(_ label: String, pressHostTime: UInt64?) {
+        guard Self.latencyLogEnabled, let pressHostTime, pressHostTime > 0
+        else { return }
+        let deltaMs = (hostNowSeconds()
+            - Double(pressHostTime) * Self.hostTickSeconds) * 1000
+        print(String(format: "[PadLatency] %@ %.2f ms", label, deltaMs))
     }
 
     // MARK: - Arrangement replay (hands-free)
@@ -1099,7 +1144,7 @@ public final class LaunchpadController {
             fireAt = now
         }
         activePads.insert(pad)
-        transport?.setLight(.pulse(colorHint: colorHint(for: assignment)), at: pad)
+        transport?.setLight(.pulse(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
         onTrigger?(pad, assignment, fireAt, lockPhaseSeconds)
     }
 
@@ -1108,11 +1153,11 @@ public final class LaunchpadController {
         let pad = LaunchpadPad(row: index / 8, col: index % 8)
         guard let assignment = assignments[pad], activePads.contains(pad) else { return }
         activePads.remove(pad)
-        transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+        transport?.setLight(.solid(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
         onRelease?(pad, assignment)
     }
 
-    public func padUp(_ pad: LaunchpadPad) {
+    public func padUp(_ pad: LaunchpadPad, pressHostTime: UInt64? = nil) {
         // Check for custom pad assignment first
         let padIdx = pad.row * 8 + pad.col
         if let store = padAssignmentStore, let ref = store.slot(padIdx: padIdx) {
@@ -1144,7 +1189,8 @@ public final class LaunchpadController {
         if !playbackMode.isToggle {
             activePads.remove(pad)
             onRelease?(pad, assignment)   // stop the momentary/gate voice NOW
-            transport?.setLight(.solid(colorHint: colorHint(for: assignment)), at: pad)
+            transport?.setLight(.solid(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
+            logPadLatency("padUp→release", pressHostTime: pressHostTime)
         }
     }
 
@@ -1196,10 +1242,35 @@ public final class LaunchpadController {
 
     // MARK: - Lights
 
-    /// The pad's display color, shared by the hardware LEDs and the
-    /// on-screen mirror.
+    /// The pad's raw colorHint (backend-provided), used as the legacy
+    /// fallback when no Riley category metadata exists. Display code
+    /// should use `displayColorHint(for:at:)` — the SINGLE source both
+    /// the on-screen tiles and the hardware LEDs paint from.
     public func colorHint(for assignment: PadAssignment) -> UInt32 {
         Self.parseColorHint(assignment.chop.colorHint) ?? Self.defaultColorHint
+    }
+
+    /// The pad's DISPLAY color — the ONE source for the on-screen tile
+    /// fill AND the hardware LED, so the physical Launchpad matches
+    /// the screen. They diverged: hardware painted the raw backend
+    /// colorHint while the screen painted musical-category colors
+    /// (and borrow grids lit as flat blue/amber source tints on
+    /// hardware — the same "one color block" class of bug 22bd58b6
+    /// fixed on screen). Mirrors LaunchpadPanelView.fillColor's
+    /// borrow → category → raw-hint precedence; pinned by
+    /// LaunchpadControllerTests so the two paths can't drift again.
+    public func displayColorHint(
+        for assignment: PadAssignment, at pad: LaunchpadPad
+    ) -> UInt32 {
+        if borrowSourceLabels[pad] != nil {
+            return UInt32(Self.borrowCategory(forStem: assignment.stem).colorHex)
+        }
+        if assignment.chop.contentType != nil {
+            return UInt32(Self.category(
+                stem: assignment.stem, contentType: assignment.chop.contentType
+            ).colorHex)
+        }
+        return colorHint(for: assignment)
     }
 
     /// "#RRGGBB" / "RRGGBB" → 0xRRGGBB.
@@ -1224,7 +1295,7 @@ public final class LaunchpadController {
                     continue
                 }
                 if let assignment = assignments[pad] {
-                    let hint = colorHint(for: assignment)
+                    let hint = displayColorHint(for: assignment, at: pad)
                     frame[pad] = activePads.contains(pad)
                         ? .pulse(colorHint: hint)
                         : .solid(colorHint: hint)

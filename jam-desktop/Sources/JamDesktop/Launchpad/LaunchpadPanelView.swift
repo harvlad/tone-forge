@@ -1557,30 +1557,12 @@ private struct PadCell: View {
         guard let assignment else {
             return Color.white.opacity(0.06)
         }
-        // Borrow pads carry no Riley contentType (the manifest stamps a flat
-        // blue/amber SOURCE hint), which made a whole borrow read as one color
-        // block. Color them by STEM category instead — like the direct auto-kit
-        // — so drums/bass/chords/vocals are distinguishable; the source song is
-        // shown by the tile's border tint + its source-song label.
-        if launchpad.sourceLabel(for: pad) != nil {
-            // Pure, unit-pinned (LaunchpadControllerTests) so the "all pads one
-            // color" borrow regression fails CI rather than shipping.
-            let cat = LaunchpadController.borrowCategory(forStem: assignment.stem)
-            let base = Color(
-                red: Double((cat.colorHex >> 16) & 0xFF) / 255.0,
-                green: Double((cat.colorHex >> 8) & 0xFF) / 255.0,
-                blue: Double(cat.colorHex & 0xFF) / 255.0)
-            return active ? base : base.opacity(0.55)
-        }
-        // Color by musical CATEGORY (grouped rack) when the pad carries Riley
-        // metadata; fall back to the raw color hint for legacy chops.
-        let hint: Int
-        if assignment.chop.contentType != nil {
-            hint = LaunchpadController.category(
-                stem: assignment.stem, contentType: assignment.chop.contentType).colorHex
-        } else {
-            hint = Int(launchpad.colorHint(for: assignment))
-        }
+        // ONE color source for screen + hardware: the controller's
+        // displayColorHint (borrow-category → Riley-category → raw hint
+        // precedence lives THERE, and the hardware LEDs paint the same
+        // value — the screen/LED mismatch was this view computing its
+        // own colors while the LEDs got raw chop hints).
+        let hint = Int(launchpad.displayColorHint(for: assignment, at: pad))
         let base = Color(
             red: Double((hint >> 16) & 0xFF) / 255.0,
             green: Double((hint >> 8) & 0xFF) / 255.0,
@@ -1602,7 +1584,7 @@ private struct PadCell: View {
         guard let assignment else {
             return Color.white.opacity(0.3)
         }
-        let hint = launchpad.colorHint(for: assignment)
+        let hint = launchpad.displayColorHint(for: assignment, at: pad)
         return Color(
             red: Double((hint >> 16) & 0xFF) / 255.0,
             green: Double((hint >> 8) & 0xFF) / 255.0,

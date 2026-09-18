@@ -921,3 +921,68 @@ attach/kit/borrow seams. Pinned by `ProjectStateBridgeTests`
 (translation bijection incl. the iOS-formula cross-check, round-trip,
 preservation, tri-state gates, borrow content-match), `ProjectStoreTests`,
 `PadFXStoreTests`, `LaunchpadSectionGateTests`.
+
+## D-031: Hardware Launchpad session fixes — press/release latency, honest underpower heuristic, LED/screen color parity
+
+**Date:** 2026-09-18
+**Decision:** Four fixes from the first extended hardware (Launchpad Pro MK3)
+session, One-Shot finger drumming:
+
+- **A successful connect is NOT a flap.** The underpower heuristic counted
+  every successful connect toward its 3-in-10-s threshold; CoreMIDI fires a
+  BURST of setup-change notifications on one physical plug-in (device +
+  entity + endpoint appearances), so a stable cable could bank ≥3 "flaps"
+  and false-fire the "may be underpowered" banner. Flaps are now only
+  torn-down links (unplug, endpoint re-enumeration) and failed connects;
+  endpoint identity is the CoreMIDI ref alone (display names resolve late
+  during enumeration — a property change is the same device, no reconnect);
+  and 30 s of trouble-free connection self-clears the banner
+  (`reviewStability`), so a one-time transient can't pin it for a session.
+- **Press-time stamps reach the controller.** `StampedPadTransport`
+  (JamDesktopCore-only widening of the shared seam — the ToneForgeEngine
+  protocol is untouched): pad callbacks carry the clocks captured ON the
+  MIDI receive thread, and `padDown` quantizes/phase-joins from the press
+  instant instead of the main-queue arrival (10–50 ms late under grid
+  repaint load). Instant gates (One-Shot/Follow) still fire ASAP — elapsed
+  hop time is not recoverable without cutting into the attack, so it is
+  not "compensated" by skipping buffer head. `JAM_PAD_LATENCY_LOG=1`
+  prints press→trigger / padUp→release deltas for on-device measurement.
+- **Loop bakes are cached and prewarmed.** Every mode loops the voice
+  (D-029), so every press ran `loopBuffer` — onset-scan file read +
+  exact-crossfade bake + cycle tile — and the FIRST press of each pad also
+  missed `regionCache` (the bake reads a shifted, extended region whose key
+  prewarm never warmed): ~200 ms of work in the touch path (measured, 8 s
+  region). Baked bodies now cache keyed on pre-shift inputs
+  (`loopCache`), and `prewarm` bakes the exact loop variant the live path
+  requests (same crossfade floor — `ChopPlayer.defaultPadCrossfadeMs` —
+  bar snap and tile gate). Measured: first press after prewarm ~2 ms,
+  repeat presses ~1–12 ms (residual = AVAudioPlayerNode stop/schedule/play
+  control cost, not decode).
+- **Release fade runs off the main actor.** The 20 ms release ramp awaited
+  the main actor between its 8 steps; a busy UI stretched it to 100+ ms of
+  audible tail — "release sticks". The ramp is a detached task now (mixer
+  volume + player stop are thread-safe; only slot bookkeeping hops back).
+- **One display-color source.** Hardware LEDs painted raw backend
+  colorHints while the screen painted category colors (and borrow grids lit
+  as flat blue/amber source tints on hardware — the LED half of the
+  22bd58b6 screen fix). `LaunchpadController.displayColorHint(for:at:)`
+  (borrow-category → Riley-category → raw hint) now feeds BOTH the panel
+  tiles and every hardware paint. Pulse quantization additionally gained
+  the web-cited palette anchors (launchpad.js FAMILY_PULSE_PALETTE: white 3,
+  cyan-blue 41, magenta 53) so pink/purple/slate pads no longer pulse
+  red/blue — engine change shared with iOS in the same commit.
+
+**Where:** `Sources/JamDesktopCore/Launchpad/USBLaunchpadTransport.swift`
+(flap semantics, ref identity, `reviewStability`, stamped callbacks),
+`LaunchpadController.swift` (`padDown(pressSongSeconds:pressHostTime:)`,
+`displayColorHint`, latency log), `Sources/JamDesktopAudio/ChopPlayer.swift`
+(`loopCache`, prewarm loop variant, detached release fade),
+`Sources/JamDesktop/SessionController.swift` (prewarm params, shared
+crossfade floor), `Sources/JamDesktop/Launchpad/LaunchpadPanelView.swift`
+(fill/glow via displayColorHint), and
+`mobile-ios/Sources/ToneForgeEngine/Launchpad/LaunchpadProMK3Protocol.swift`
+(palette anchors). Pinned by `USBLaunchpadTransportTests` (burst, rename,
+failed-connect, stable-clear, stamped clocks, palette hues),
+`LaunchpadControllerTests` (stamped seam + press-stamp fire time, display
+color through the press cycle, borrow LED category) and
+`ChopPlayerLoopBakeCacheTests` (bake-once, prewarm-hit).

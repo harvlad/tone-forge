@@ -1003,6 +1003,125 @@ final class LaunchpadControllerTests: XCTestCase {
         XCTAssertEqual(fired, 1)
     }
 
+    // MARK: - Stamped hardware presses (receive-thread clocks)
+
+    private final class StampedFakeTransport: LaunchpadTransport, StampedPadTransport {
+        var connectionState: LaunchpadConnectionState { .connected(deviceName: "LP") }
+        var onPadDown: ((LaunchpadPad) -> Void)?
+        var onPadUp: ((LaunchpadPad) -> Void)?
+        var onPadDownStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
+        var onPadUpStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
+        var lights: [LaunchpadPad: LaunchpadLight] = [:]
+        func setLight(_ light: LaunchpadLight, at pad: LaunchpadPad) { lights[pad] = light }
+        func setLights(_ frame: [LaunchpadPad: LaunchpadLight]) {
+            for (pad, light) in frame { lights[pad] = light }
+        }
+        func clearLights() { lights.removeAll() }
+    }
+
+    /// attach() prefers the stamped seam on transports that have it,
+    /// and the press-time song stamp — not the controller clock at
+    /// main-queue arrival — becomes the instant fire time. The main
+    /// hop lags the press by 10–50 ms under UI load; quantize and
+    /// phase joins must not inherit that.
+    func testAttachWiresStampedSeamAndPressStampSetsFireTime() {
+        let transport = StampedFakeTransport()
+        let controller = makeController(now: 5.0)   // main-arrival clock
+        controller.setChops([chop(0)], stem: "other", sliceMode: "chord")
+        controller.attach(transport: transport)
+
+        XCTAssertNotNil(transport.onPadDownStamped)
+        XCTAssertNotNil(transport.onPadUpStamped)
+        XCTAssertNil(transport.onPadDown, "stamped seam replaces legacy")
+
+        var fired: [Double] = []
+        controller.onTrigger = { _, _, fireAt, _ in fired.append(fireAt) }
+        // Press stamped 40 ms before the hop delivered it.
+        transport.onPadDownStamped?(LaunchpadPad(row: 0, col: 0), 4.96, 123)
+        XCTAssertEqual(fired, [4.96], "instant fire uses the press stamp")
+
+        var released = 0
+        controller.onRelease = { _, _ in released += 1 }
+        transport.onPadUpStamped?(LaunchpadPad(row: 0, col: 0), 4.99, 456)
+        XCTAssertEqual(released, 1)
+    }
+
+    // MARK: - Display color (screen ↔ hardware LED parity)
+
+    /// ONE color source for the on-screen tile and the hardware LED.
+    /// They diverged: the LEDs painted raw backend colorHints while the
+    /// screen painted musical-category colors — the "hardware colors
+    /// don't match the screen" bug.
+    func testDisplayColorHintPrefersRileyCategoryOverRawHint() {
+        let controller = makeController()
+        let riley = Chop(
+            idx: 0, startSec: 0, endSec: 1, durationSec: 1,
+            kind: "chord", colorHint: "#123456", contentType: "rhythm_loop"
+        )
+        controller.setChops([riley], stem: "other", sliceMode: "chord")
+        let pad = LaunchpadPad(row: 0, col: 0)
+        let assignment = controller.assignments[pad]!
+
+        XCTAssertEqual(
+            controller.displayColorHint(for: assignment, at: pad),
+            UInt32(LaunchpadController.PadCategory.rhythm.colorHex),
+            "Riley pads show their category accent, not the raw hint"
+        )
+    }
+
+    func testDisplayColorHintFallsBackToRawHintForLegacyChops() {
+        let controller = makeController()
+        controller.setChops(
+            [chop(0, colorHint: "#123456")], stem: "other", sliceMode: "chord")
+        let pad = LaunchpadPad(row: 0, col: 0)
+        let assignment = controller.assignments[pad]!
+        XCTAssertEqual(controller.displayColorHint(for: assignment, at: pad), 0x123456)
+    }
+
+    /// Hardware LEDs paint the SAME category color the screen shows —
+    /// through every state transition (idle solid, sounding pulse,
+    /// released solid).
+    func testHardwareLEDsPaintCategoryColorThroughPressCycle() {
+        let transport = FakeTransport()
+        let controller = makeController()
+        let riley = Chop(
+            idx: 0, startSec: 0, endSec: 1, durationSec: 1,
+            kind: "chord", colorHint: "#FF0000", contentType: "lead_loop"
+        )
+        controller.setChops([riley], stem: "other", sliceMode: "chord")
+        controller.attach(transport: transport)
+        let pad = LaunchpadPad(row: 0, col: 0)
+        let lead = UInt32(LaunchpadController.PadCategory.lead.colorHex)
+
+        XCTAssertEqual(transport.lights[pad], .solid(colorHint: lead))
+        controller.padDown(pad)
+        XCTAssertEqual(transport.lights[pad], .pulse(colorHint: lead))
+        controller.padUp(pad)
+        XCTAssertEqual(transport.lights[pad], .solid(colorHint: lead))
+    }
+
+    /// Borrow pads carry no contentType; hardware must show the
+    /// borrow STEM category — the screen-side fix (22bd58b6) alone
+    /// left the LEDs painting the manifest's flat blue/amber source
+    /// tint ("one color block" on hardware).
+    func testBorrowPadsLightByStemCategoryOnHardware() {
+        let transport = FakeTransport()
+        let controller = makeController()
+        controller.attach(transport: transport)
+        let mount = LaunchpadController.BorrowMount(
+            chop: chop(0, colorHint: "#3B82F6"),   // manifest source tint
+            stem: "bass", sourceLabel: "Donor Song", source: .donor
+        )
+        controller.adoptBorrowAssignments([mount])
+
+        let pad = controller.assignments.keys.first!
+        XCTAssertEqual(
+            transport.lights[pad],
+            .solid(colorHint: UInt32(LaunchpadController.PadCategory.bass.colorHex)),
+            "borrow LEDs color by stem category, not the source tint"
+        )
+    }
+
     // MARK: - Color hints
 
     func testParseColorHint() {

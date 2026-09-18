@@ -462,7 +462,10 @@ final class SessionController: ObservableObject {
             let chop = assignment.chop
             let loopable = self.launchpad.playbackMode.loops
             let rileyFade = chop.crossfadeMs ?? 0
-            let crossfadeMs = loopable ? (rileyFade > 0 ? rileyFade : 15) : 0
+            // Floor shared with ChopPlayer.prewarm so the prewarmed
+            // bake key is the one this press asks for.
+            let crossfadeMs = loopable
+                ? (rileyFade > 0 ? rileyFade : ChopPlayer.defaultPadCrossfadeMs) : 0
             // Bar length (4/4) from the song tempo — the ChopPlayer snaps a loop
             // to a whole-bar multiple so all loops stay phase-locked to the grid.
             // Linked: bar length comes from the SESSION tempo so loop
@@ -935,8 +938,16 @@ final class SessionController: ObservableObject {
         let presetAssignments = launchpad.assignments.values
             .map { (chop: $0.chop, stem: $0.stem) }
         let activatedId = session.bundle.analysisId
+        // Loop-bake parameters mirror the live trigger path so prewarm
+        // warms the exact buffers the first presses will ask for.
+        let prewarmBpm = session.bundle.meta.tempoBpm ?? 0
+        let prewarmBarSeconds = prewarmBpm > 0 ? (60.0 / prewarmBpm) * 4.0 : 0
+        let prewarmCycle = launchpad.loopLengthSeconds
         Task { [weak self] in
-            await self?.chopPlayer.prewarm(presetAssignments)
+            await self?.chopPlayer.prewarm(
+                presetAssignments,
+                loopBarSeconds: prewarmBarSeconds,
+                cycleSeconds: prewarmCycle)
             // kind explicit: every song opens on the Auto Kit — a Drum Kit
             // choice on the previous song must not leak across songs.
             // announce: false — automatic attach-time load, not a Remix
@@ -1109,8 +1120,15 @@ final class SessionController: ObservableObject {
             activeGridPackId = pack.packId
             activeBorrowContext = nil
             // Decode the kit's buffers off the touch path so the first
-            // press of every pad fires without the read+SRC delay.
-            Task { [weak self] in await self?.chopPlayer.prewarm(pairs) }
+            // press of every pad fires without the read+SRC delay —
+            // loop-bake params mirror onTrigger's derivation exactly.
+            let kitBpm = attachedBundle?.meta.tempoBpm ?? 0
+            let kitBarSeconds = kitBpm > 0 ? (60.0 / kitBpm) * 4.0 : 0
+            let kitCycle = launchpad.loopLengthSeconds
+            Task { [weak self] in
+                await self?.chopPlayer.prewarm(
+                    pairs, loopBarSeconds: kitBarSeconds, cycleSeconds: kitCycle)
+            }
             if announce {
                 // Kits land on a surface that only sounds when TOUCHED —
                 // state the success and where to hear it, or the tap reads

@@ -411,33 +411,50 @@ public enum LaunchpadProMK3Protocol {
         ledMessages([.pulse(pad: pad, palette: palette)])[0]
     }
 
-    // MARK: Palette (PDF-cited entries only)
+    // MARK: Palette (PDF-cited + web-verified entries)
 
     /// The reference manual's palette table (PDF p.9–10) is printed
-    /// as colour swatches without RGB values, so only entries the
-    /// manual names in prose are used here:
+    /// as colour swatches without RGB values, so the entries here are
+    /// the ones the manual names in prose:
     ///   0  = off        // PDF p.12 (example 4)
     ///   5  = red        // PDF p.11 (example 1)
     ///   13 = yellow     // PDF p.13 (SysEx example)
     ///   21 = green      // PDF p.13 (SysEx example)
     ///   37 = turquoise  // PDF p.13 (SysEx example)
     ///   45 = blue       // PDF p.12 (example 3)
+    /// plus the entries the web surface already drives on real
+    /// hardware (launchpad.js FAMILY_PULSE_PALETTE / PULSE_PALETTE_RGB,
+    /// hue-verified on the device):
+    ///   3  = white
+    ///   41 = cyan-blue
+    ///   53 = magenta
     /// Static/dim colours go over the RGB spec (type 03h) instead, so
-    /// this coarse table only ever feeds flash/pulse effects.
+    /// this coarse table only ever feeds flash/pulse effects. With
+    /// only the six PDF hues, pulsing category pads hue-shifted hard
+    /// (pink/purple → red/blue, slate → blue) and the hardware visibly
+    /// disagreed with the on-screen grid while pads sounded.
     public static let paletteOff: UInt8 = 0
+    public static let paletteWhite: UInt8 = 3
     public static let paletteRed: UInt8 = 5
     public static let paletteYellow: UInt8 = 13
     public static let paletteGreen: UInt8 = 21
     public static let paletteTurquoise: UInt8 = 37
+    public static let paletteCyanBlue: UInt8 = 41
     public static let paletteBlue: UInt8 = 45
+    public static let paletteMagenta: UInt8 = 53
 
+    /// Hints for the web-cited entries come from launchpad.js
+    /// PULSE_PALETTE_RGB (0–127 domain, ×2 to 8-bit).
     private static let paletteAnchors: [(entry: UInt8, hint: UInt32)] = [
         (paletteOff, 0x000000),
+        (paletteWhite, 0x787878),
         (paletteRed, 0xFF0000),
         (paletteYellow, 0xFFFF00),
         (paletteGreen, 0x00FF00),
         (paletteTurquoise, 0x00FFFF),
+        (paletteCyanBlue, 0x0078FE),
         (paletteBlue, 0x0000FF),
+        (paletteMagenta, 0xA000A0),
     ]
 
     /// Nearest PDF-cited palette entry to an 0xRRGGBB hint (squared

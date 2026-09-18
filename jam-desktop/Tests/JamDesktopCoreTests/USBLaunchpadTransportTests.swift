@@ -111,6 +111,34 @@ final class USBLaunchpadTransportTests: XCTestCase {
         XCTAssertEqual(downs, [LaunchpadPad(row: 7, col: 0)])
     }
 
+    /// StampedPadTransport: when the stamped callbacks are set they
+    /// REPLACE the legacy ones and carry the receive-thread clocks
+    /// (song seconds + packet host time) with the pad, so the
+    /// controller can quantize against the true press instant.
+    func testStampedPadCallbacksCarryReceiveThreadClocks() {
+        let transport = makeTransport()
+        var downs: [(pad: LaunchpadPad, song: Double, host: UInt64)] = []
+        var ups: [(pad: LaunchpadPad, song: Double, host: UInt64)] = []
+        var legacyCalls = 0
+        transport.onPadDown = { _ in legacyCalls += 1 }
+        transport.onPadUp = { _ in legacyCalls += 1 }
+        transport.onPadDownStamped = { downs.append(($0, $1, $2)) }
+        transport.onPadUpStamped = { ups.append(($0, $1, $2)) }
+        midi.plugInLaunchpad()
+
+        midi.receive([.noteOn(channel: 0, note: 11, velocity: 127)], hostTime: 777)
+        midi.receive([.noteOn(channel: 0, note: 11, velocity: 0)], hostTime: 888)
+        drainMainQueue()
+
+        XCTAssertEqual(downs.count, 1)
+        XCTAssertEqual(downs[0].pad, LaunchpadPad(row: 7, col: 0))
+        XCTAssertEqual(downs[0].song, 42.5)     // receive-thread stamp
+        XCTAssertEqual(downs[0].host, 777)      // packet host stamp
+        XCTAssertEqual(ups.count, 1)
+        XCTAssertEqual(ups[0].host, 888)
+        XCTAssertEqual(legacyCalls, 0, "stamped callbacks replace legacy")
+    }
+
     func testVelocityScalesAndZeroPacketStampFallsBack() {
         let transport = makeTransport()
         midi.plugInLaunchpad()
@@ -233,6 +261,27 @@ final class USBLaunchpadTransportTests: XCTestCase {
         )
     }
 
+    /// The category accent colors must land on hue-faithful palette
+    /// entries when a sounding pad pulses — with only the six PDF
+    /// anchors, pink/purple pulsed RED/BLUE and slate pulsed blue, so
+    /// the hardware visibly disagreed with the on-screen grid.
+    func testCategoryColorsPulseOnHueFaithfulPaletteEntries() {
+        typealias LP = LaunchpadProMK3Protocol
+        // vocal pink → magenta (was: red)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0xEC4899), LP.paletteMagenta)
+        // fx / stab purple → magenta (was: blue)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0xA855F7), LP.paletteMagenta)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x8B5CF6), LP.paletteMagenta)
+        // rhythm blue → cyan-blue (was: pure blue)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x3B82F6), LP.paletteCyanBlue)
+        // sample slate → white (was: blue-ish)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x64748B), LP.paletteWhite)
+        // The PDF-cited primaries keep their entries.
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0xFF0000), LP.paletteRed)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x00FF00), LP.paletteGreen)
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x0000FF), LP.paletteBlue)
+    }
+
     func testRedrawOnConnectReplaysCachedFrame() {
         let transport = makeTransport()
         // Light a pad while unplugged: cached, nothing sent.
@@ -282,17 +331,84 @@ final class USBLaunchpadTransportTests: XCTestCase {
 
     // MARK: - Underpower heuristic
 
+    /// Flaps = torn-down links, NOT successful connects: three
+    /// unplug/replug cycles inside 10 s raise the banner.
     func testConnectionFlappingRaisesUnderpower() {
         let transport = makeTransport()
-        midi.plugInLaunchpad()                 // flap 1
+        midi.plugInLaunchpad()                 // connect — not a flap
         XCTAssertFalse(transport.underpowerSuspected)
 
-        now = now.addingTimeInterval(2)
-        midi.unplugLaunchpad()                 // flap 2
-        XCTAssertFalse(transport.underpowerSuspected)
+        for cycle in 1...3 {
+            now = now.addingTimeInterval(1)
+            midi.unplugLaunchpad()             // flap N
+            if cycle < 3 {
+                XCTAssertFalse(transport.underpowerSuspected,
+                               "cycle \(cycle) must not raise the banner yet")
+            }
+            now = now.addingTimeInterval(1)
+            midi.plugInLaunchpad()
+        }
+        XCTAssertTrue(transport.underpowerSuspected)
+    }
 
-        now = now.addingTimeInterval(2)
-        midi.plugInLaunchpad()                 // flap 3 inside 10 s
+    /// A single physical plug-in makes CoreMIDI fire a BURST of
+    /// setup-change notifications (device + entity + endpoint
+    /// appearances). A stable connection must survive the burst with
+    /// no banner and no reconnect churn — counting successful
+    /// connects as flaps false-fired the banner on a healthy cable.
+    func testStableConnectSurvivesSetupNotificationBurst() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        midi.onSetupChanged?()
+        midi.onSetupChanged?()
+        midi.onSetupChanged?()
+
+        XCTAssertFalse(transport.underpowerSuspected)
+        XCTAssertEqual(midi.connectedInputs, [FakeMIDIInterface.launchpadMIDI],
+                       "one physical device = ONE input connection")
+        XCTAssertEqual(
+            transport.connectionState,
+            .connected(deviceName: "Launchpad Pro MK3")
+        )
+    }
+
+    /// During enumeration the endpoint's display name resolves late
+    /// ("LPProMK3 MIDI" → "Launchpad Pro MK3 LPProMK3 MIDI") while its
+    /// ref stays put. A property-only change is the same device — no
+    /// reconnect, no flap.
+    func testEndpointRenameDuringEnumerationDoesNotReconnect() {
+        let transport = makeTransport()
+        let bare = MIDIEndpoint(
+            ref: FakeMIDIInterface.launchpadMIDI.ref,
+            name: "LPProMK3 MIDI", displayName: "LPProMK3 MIDI"
+        )
+        midi.fakeSources = [bare]
+        midi.fakeDestinations = [bare]
+        midi.onSetupChanged?()
+        XCTAssertEqual(midi.connectedInputs.count, 1)
+
+        midi.fakeSources = [FakeMIDIInterface.launchpadMIDI]
+        midi.fakeDestinations = [FakeMIDIInterface.launchpadMIDI]
+        midi.onSetupChanged?()
+
+        XCTAssertEqual(midi.connectedInputs.count, 1, "same ref = no reconnect")
+        XCTAssertFalse(transport.underpowerSuspected)
+        XCTAssertEqual(
+            transport.connectionState,
+            .connected(deviceName: "Launchpad Pro MK3")
+        )
+    }
+
+    /// Failed connects still count toward the threshold — a browning-
+    /// out device that never comes up cleanly must raise the banner.
+    func testRepeatedFailedConnectsRaiseUnderpower() {
+        midi.connectSucceeds = false
+        let transport = makeTransport()
+        midi.plugInLaunchpad()                 // failed connect 1
+        XCTAssertFalse(transport.underpowerSuspected)
+        midi.onSetupChanged?()                 // failed connect 2
+        XCTAssertFalse(transport.underpowerSuspected)
+        midi.onSetupChanged?()                 // failed connect 3
         XCTAssertTrue(transport.underpowerSuspected)
     }
 
@@ -304,6 +420,49 @@ final class USBLaunchpadTransportTests: XCTestCase {
         now = now.addingTimeInterval(60)
         midi.plugInLaunchpad()
         XCTAssertFalse(transport.underpowerSuspected)
+    }
+
+    /// 30 s of trouble-free connection clears the banner (a one-time
+    /// transient must not pin it for the whole session). Production
+    /// drives reviewStability from a timer; tests drive it against
+    /// the injected clock.
+    func testUnderpowerClearsAfterSustainedStableConnection() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        for _ in 1...3 {
+            now = now.addingTimeInterval(1)
+            midi.unplugLaunchpad()
+            now = now.addingTimeInterval(1)
+            midi.plugInLaunchpad()
+        }
+        XCTAssertTrue(transport.underpowerSuspected)
+
+        now = now.addingTimeInterval(29)       // 29 s quiet: not yet
+        transport.reviewStability()
+        XCTAssertTrue(transport.underpowerSuspected)
+
+        now = now.addingTimeInterval(2)        // 31 s quiet: clears
+        transport.reviewStability()
+        XCTAssertFalse(transport.underpowerSuspected)
+    }
+
+    /// The stable clear only applies while CONNECTED — an unplugged
+    /// transport keeps the banner (the user should still see it).
+    func testStableClearRequiresLiveConnection() {
+        let transport = makeTransport()
+        midi.plugInLaunchpad()
+        for _ in 1...3 {
+            now = now.addingTimeInterval(1)
+            midi.unplugLaunchpad()
+            now = now.addingTimeInterval(1)
+            midi.plugInLaunchpad()
+        }
+        midi.unplugLaunchpad()
+        XCTAssertTrue(transport.underpowerSuspected)
+
+        now = now.addingTimeInterval(120)
+        transport.reviewStability()
+        XCTAssertTrue(transport.underpowerSuspected)
     }
 
     func testSendFailureWhileConnectedRaisesUnderpower() {

@@ -178,6 +178,14 @@ final class LaunchpadProMK3ProtocolTests: XCTestCase {
         XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x00FFFF), LP.paletteTurquoise)
         // The mic-sample warm orange leans yellow.
         XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0xFF8C3A), LP.paletteYellow)
+        // Web-cited entries (launchpad.js FAMILY_PULSE_PALETTE, hue-
+        // verified on hardware) keep pulsing category pads on-hue:
+        // with only the six PDF anchors, pink/purple pulsed red/blue
+        // and the device visibly disagreed with the screen.
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0xEC4899), LP.paletteMagenta)   // vocal pink
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0xA855F7), LP.paletteMagenta)   // fx purple
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x3B82F6), LP.paletteCyanBlue)  // rhythm blue
+        XCTAssertEqual(LP.nearestPaletteEntry(colorHint: 0x64748B), LP.paletteWhite)     // sample slate
     }
 
     // MARK: - MIDI1Parser

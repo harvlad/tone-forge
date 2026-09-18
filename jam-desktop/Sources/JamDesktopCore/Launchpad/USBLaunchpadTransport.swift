@@ -19,7 +19,13 @@
 //     as batched RGB SysEx — a full 64-pad redraw is ONE message.
 //   - Underpower heuristic: unpowered hubs brown the device out,
 //     which shows up as connection flapping or send errors. Either
-//     raises `underpowerSuspected` for a UI banner.
+//     raises `underpowerSuspected` for a UI banner. A SUCCESSFUL
+//     connect is NOT a flap — CoreMIDI fires a burst of setup-change
+//     notifications on one plug-in (device, entity, endpoint), and
+//     counting the resulting connects tripped the banner on a
+//     perfectly stable cable. Only a torn-down link (disconnect after
+//     connect, or endpoint re-enumeration) and failed connects count,
+//     and 30 s of stable connection clears the banner again.
 //
 // @preconcurrency: LaunchpadTransport is a nonisolated protocol;
 // every conforming member here is main-actor.
@@ -28,21 +34,43 @@ import Foundation
 import Observation
 import ToneForgeEngine
 
+/// Desktop-side widening of the shared LaunchpadTransport seam:
+/// transports that stamp pad events on the MIDI receive thread can
+/// deliver the press-time clocks WITH the pad, so the controller
+/// quantizes (and measures) against the true press instant instead of
+/// the main-queue arrival — under UI load (full-window grid repaints)
+/// the main hop alone adds 10–50 ms. When a stamped callback is set,
+/// the legacy `onPadDown`/`onPadUp` closure is NOT also called.
+@MainActor
+public protocol StampedPadTransport: AnyObject {
+    var onPadDownStamped: ((LaunchpadPad, _ songSeconds: Double, _ hostTime: UInt64) -> Void)? { get set }
+    var onPadUpStamped: ((LaunchpadPad, _ songSeconds: Double, _ hostTime: UInt64) -> Void)? { get set }
+}
+
 @MainActor
 @Observable
-public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
+public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
+                                          StampedPadTransport {
 
     // MARK: - Observable state
 
     public private(set) var connectionState: LaunchpadConnectionState = .notConnected
     /// ≥3 connection flaps inside 10 s, or a send error while online.
     /// Dismissible: the banner clears it; the next flap re-raises it.
+    /// Also self-clearing: `stableClearInterval` of trouble-free
+    /// connection resets it, so a one-time transient can't pin the
+    /// banner for the whole session.
     public var underpowerSuspected = false
 
     // MARK: - Callbacks
 
     @ObservationIgnored public var onPadDown: ((LaunchpadPad) -> Void)?
     @ObservationIgnored public var onPadUp: ((LaunchpadPad) -> Void)?
+    /// Stamped pad callbacks (StampedPadTransport): pad + the clocks
+    /// captured ON the MIDI receive thread, before the main hop.
+    /// When set, these REPLACE the legacy closures above.
+    @ObservationIgnored public var onPadDownStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
+    @ObservationIgnored public var onPadUpStamped: ((LaunchpadPad, Double, UInt64) -> Void)?
     /// Events arrive pre-stamped from the MIDI thread.
     @ObservationIgnored public var onContribution: ((ContributionEvent) -> Void)?
     /// Outer-button presses (Bool = down).
@@ -60,8 +88,16 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
     @ObservationIgnored private var outputEndpoint: MIDIEndpoint?
     /// PadIndex.rawValue → last light sent, for diffing.
     @ObservationIgnored private var ledCache: [Int: LaunchpadLight] = [:]
-    /// Recent successful connects, for flap detection.
-    @ObservationIgnored private var connectTimes: [Date] = []
+    /// Recent FLAPS — torn-down links and failed connects. Successful
+    /// connects deliberately do NOT land here (see noteFlap).
+    @ObservationIgnored private var flapTimes: [Date] = []
+    /// When the current connection was established (nil = offline).
+    @ObservationIgnored private var connectedAt: Date?
+    /// Last flap or send failure — the stable-clear timer measures
+    /// trouble-free time from max(connectedAt, lastEvidence).
+    @ObservationIgnored private var lastEvidenceAt: Date?
+    /// Pending stable-connection review (cancelled on disconnect).
+    @ObservationIgnored private var stableReview: DispatchWorkItem?
     /// True between `suspend()` and `resume()` — LEDs are cached but
     /// not sent, and the device stays in Live Mode.
     @ObservationIgnored private var suspended = false
@@ -97,10 +133,22 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
 
         switch (source, destination) {
         case (let source?, let destination?):
-            guard inputEndpoint != source || outputEndpoint != destination else {
+            // Identity is the endpoint REF, not the whole struct: during
+            // a single plug-in CoreMIDI resolves names progressively
+            // ("LPProMK3 MIDI" → "Launchpad Pro MK3 LPProMK3 MIDI"), and
+            // treating a property change as a new device forced a
+            // reconnect per notification — the burst that false-fired
+            // the underpower banner on a stable cable.
+            guard inputEndpoint?.ref != source.ref
+                    || outputEndpoint?.ref != destination.ref else {
                 return  // already connected to this device
             }
-            if inputEndpoint != nil { disconnect() }
+            if inputEndpoint != nil {
+                // An established link died and the device re-enumerated
+                // (new refs) — that IS a flap, the brown-out signature.
+                disconnect()
+                noteFlap()
+            }
             connect(source: source, destination: destination)
         default:
             if inputEndpoint != nil || outputEndpoint != nil {
@@ -127,7 +175,12 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
         inputEndpoint = source
         outputEndpoint = destination
         connectionState = .connected(deviceName: LaunchpadProMK3Protocol.deviceNameFragment)
-        noteFlap()
+        // A SUCCESSFUL connect is not a flap (it used to count one,
+        // which — combined with CoreMIDI's setup-notification burst —
+        // raised the banner on a normal stable plug-in). Instead, start
+        // the stable-connection clock that eventually CLEARS the banner.
+        connectedAt = dateProvider()
+        scheduleStableReview()
 
         if suspended {
             sendChecked(LaunchpadProMK3Protocol.enterLiveMode)
@@ -147,16 +200,58 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
         inputEndpoint = nil
         outputEndpoint = nil
         connectionState = .notConnected
+        connectedAt = nil
+        stableReview?.cancel()
+        stableReview = nil
     }
 
     // MARK: - Underpower heuristic
 
+    /// Trouble-free connected time needed before the banner self-clears.
+    public static let stableClearInterval: TimeInterval = 30
+    /// ≥ this many flaps inside `flapWindow` raises the banner.
+    static let flapThreshold = 3
+    static let flapWindow: TimeInterval = 10
+
+    /// A FLAP: an established link tore down, or a connect failed.
+    /// Successful connects never call this.
     private func noteFlap() {
         let now = dateProvider()
-        connectTimes.append(now)
-        connectTimes.removeAll { now.timeIntervalSince($0) > 10 }
-        if connectTimes.count >= 3 {
+        lastEvidenceAt = now
+        flapTimes.append(now)
+        flapTimes.removeAll { now.timeIntervalSince($0) > Self.flapWindow }
+        if flapTimes.count >= Self.flapThreshold {
             underpowerSuspected = true
+        }
+    }
+
+    /// Schedule (or re-arm) the stable-connection review that clears
+    /// the banner after `stableClearInterval` of trouble-free uptime.
+    private func scheduleStableReview() {
+        stableReview?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            // Runs on the main queue (asyncAfter below).
+            MainActor.assumeIsolated { self?.reviewStability() }
+        }
+        stableReview = item
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.stableClearInterval, execute: item)
+    }
+
+    /// Clear the banner iff the connection has been up and quiet (no
+    /// flap, no send failure) for `stableClearInterval`. Re-arms itself
+    /// when evidence arrived after the timer was set. Internal so the
+    /// tests can drive it against the injected dateProvider.
+    func reviewStability() {
+        stableReview = nil
+        guard case .connected = connectionState, let connectedAt else { return }
+        let now = dateProvider()
+        let quietSince = max(connectedAt, lastEvidenceAt ?? .distantPast)
+        if now.timeIntervalSince(quietSince) >= Self.stableClearInterval {
+            underpowerSuspected = false
+            flapTimes.removeAll()
+        } else {
+            scheduleStableReview()
         }
     }
 
@@ -164,7 +259,13 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
     private func sendChecked(_ sysex: [UInt8]) -> Bool {
         guard let out = outputEndpoint else { return false }
         let ok = midi.send(sysex, to: out)
-        if !ok { underpowerSuspected = true }
+        if !ok {
+            underpowerSuspected = true
+            lastEvidenceAt = dateProvider()
+            // Sends can recover (transient brown-out): keep the stable
+            // clock running so a later quiet stretch clears the banner.
+            if connectedAt != nil { scheduleStableReview() }
+        }
         return ok
     }
 
@@ -206,9 +307,24 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport {
             hostTime: hostTime,
             velocity: down ? velocity : 1.0
         ))
-        // Legacy LaunchpadPad callbacks (row 0 = top).
+        // LaunchpadPad callbacks (row 0 = top). Stamped variant wins:
+        // it carries the receive-thread clocks so the controller can
+        // quantize/measure against the true press instant, not the
+        // main-queue arrival.
         let legacy = LaunchpadPad(row: 8 - pad.row, col: pad.col - 1)
-        (down ? onPadDown : onPadUp)?(legacy)
+        if down {
+            if let stamped = onPadDownStamped {
+                stamped(legacy, songSeconds, hostTime)
+            } else {
+                onPadDown?(legacy)
+            }
+        } else {
+            if let stamped = onPadUpStamped {
+                stamped(legacy, songSeconds, hostTime)
+            } else {
+                onPadUp?(legacy)
+            }
+        }
     }
 
     // MARK: - LEDs

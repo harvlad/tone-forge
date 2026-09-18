@@ -115,6 +115,30 @@ public final class ChopPlayer {
     private var regionCache: [RegionKey: AVAudioPCMBuffer] = [:]
     private static let regionCacheCap = 48
 
+    /// Baked LOOP cache: the fully-prepared loop body (onset-shifted,
+    /// seam-crossfaded, cycle-tiled) plus its launch-compensation
+    /// shift, keyed on the PRE-shift inputs (the shift is a pure
+    /// function of them). Every playback mode loops the voice now
+    /// (One-Shot/Follow gate included), so before this cache EVERY
+    /// press paid the onset-scan file read + crossfade bake (~ms), and
+    /// the FIRST press of each pad missed `regionCache` entirely — the
+    /// bake reads a shifted, extended region whose key prewarm never
+    /// warmed — and paid the whole 8 s read+SRC (tens of ms) in the
+    /// touch path: the "pad press isn't immediate" hardware bug.
+    private struct LoopKey: Hashable {
+        let url: URL
+        let startFrame: AVAudioFramePosition
+        let frameCount: AVAudioFrameCount
+        /// Crossfade in µs so Double never lands in a Hashable key.
+        let xfadeMicroSec: Int
+        let cycleFrames: Int
+    }
+    private var loopCache: [LoopKey: (buffer: AVAudioPCMBuffer, shiftSec: Double)] = [:]
+    private static let loopCacheCap = 48
+    /// Actual bakes performed (cache misses) — regression tests pin
+    /// that a repeat trigger and a prewarmed first press are cache hits.
+    private(set) var loopBakeCount = 0
+
     private static let poolSize = 16
 
     /// Destination the voice chains feed. Defaults to the engine's
@@ -172,6 +196,7 @@ public final class ChopPlayer {
         }
         files = opened
         regionCache.removeAll()
+        loopCache.removeAll()
     }
 
     /// 44-bin peak envelope for a pad's chop — the grid tiles draw
@@ -220,16 +245,35 @@ public final class ChopPlayer {
         files.removeAll()
         fileCache.removeAll()
         regionCache.removeAll()
+        loopCache.removeAll()
     }
 
     // MARK: - Prewarm
 
-    /// Decode-and-cache each assignment's region buffer WITHOUT playing
-    /// it, so the first real press schedules from cache instead of
+    /// Seam-crossfade floor for pad loops when the chop carries no
+    /// measured Riley fade — shared by the live trigger path
+    /// (SessionController) and prewarm so both derive the SAME bake-
+    /// cache key; a mismatch would warm a key no press ever asks for.
+    public static let defaultPadCrossfadeMs: Double = 15
+
+    /// Decode-and-cache each assignment's buffers WITHOUT playing
+    /// them, so the first real press schedules from cache instead of
     /// paying the 8 s read+SRC in the touch path ("delay on pads").
-    /// Yields between pads so a 16-pad kit doesn't hitch the UI. Safe
-    /// to race a real trigger — regionBuffer re-checks the cache.
-    public func prewarm(_ items: [(chop: Chop, stem: String)]) async {
+    /// Warms BOTH variants: the plain region AND the baked LOOP body
+    /// (onset-shifted + crossfaded + cycle-tiled) — every playback
+    /// mode loops the voice now (One-Shot/Follow gates included), so
+    /// the loop bake is what the first press actually asks for; before
+    /// this it missed the warm cache and paid the whole read+SRC+bake
+    /// at the press. `loopBarSeconds`/`cycleSeconds` must match what
+    /// the trigger path passes (SessionController wires both from the
+    /// same tempo/kit state). Yields between pads so a 16-pad kit
+    /// doesn't hitch the UI. Safe to race a real trigger — both caches
+    /// re-check.
+    public func prewarm(
+        _ items: [(chop: Chop, stem: String)],
+        loopBarSeconds: Double = 0,
+        cycleSeconds: Double = 0
+    ) async {
         for item in items {
             guard let file = files[item.stem] else { continue }
             let sampleRate = file.fileFormat.sampleRate
@@ -243,6 +287,23 @@ public final class ChopPlayer {
             guard frameCount > 0, startFrame < file.length else { continue }
             _ = regionBuffer(file: file, startFrame: startFrame,
                              frameCount: AVAudioFrameCount(frameCount))
+            await Task.yield()
+            // LOOP variant — same endSec / crossfade / tile derivation
+            // as the live path (trigger() + SessionController).
+            let rileyFade = item.chop.crossfadeMs ?? 0
+            let xfade = rileyFade > 0 ? rileyFade : Self.defaultPadCrossfadeMs
+            let loopEnd = Self.loopRegionEndSec(
+                chop: item.chop, loop: true, loopBarSeconds: loopBarSeconds)
+            let loopFrames = Self.regionFrameCount(
+                startSec: item.chop.startSec, endSec: loopEnd,
+                sampleRate: sampleRate, fileLength: file.length)
+            if loopFrames > 0 {
+                _ = loopBuffer(
+                    file: file, startFrame: startFrame,
+                    frameCount: AVAudioFrameCount(loopFrames),
+                    crossfadeMs: xfade,
+                    tileToCycleSec: item.chop.loopScore != nil ? cycleSeconds : 0)
+            }
             await Task.yield()
         }
     }
@@ -706,6 +767,18 @@ public final class ChopPlayer {
         tileToCycleSec: Double = 0
     ) -> (buffer: AVAudioPCMBuffer, shiftSec: Double)? {
         let xfadeMs = crossfadeMs > 0 ? crossfadeMs : SeamlessLoop.defaultLoopCrossfadeMs
+        // Bake cache: keyed on the pre-shift inputs (the onset shift is
+        // deterministic in them), so repeat presses — and prewarmed
+        // first presses — schedule instantly instead of re-reading and
+        // re-baking the body in the touch path.
+        let key = LoopKey(
+            url: file.url, startFrame: startFrame, frameCount: frameCount,
+            xfadeMicroSec: Int((xfadeMs * 1000).rounded()),
+            cycleFrames: tileToCycleSec > 0
+                ? Int((tileToCycleSec * Self.canonicalFormat.sampleRate).rounded())
+                : 0)
+        if let hit = loopCache[key] { return hit }
+        loopBakeCount += 1
         let srcRate = file.processingFormat.sampleRate
         // Onset-phase snap: the grid's downbeat timestamps land tens of ms
         // AFTER the audible attack, so a grid-cut region starts just past
@@ -763,6 +836,10 @@ public final class ChopPlayer {
                 looped = SeamlessLoop.tileToLength(looped, targetFrames: cycleFrames)
             }
         }
+        if loopCache.count >= Self.loopCacheCap {
+            loopCache.removeAll()   // simple flush, matching regionCache
+        }
+        loopCache[key] = (looped, shiftSec)
         return (looped, shiftSec)
     }
 
@@ -836,7 +913,14 @@ public final class ChopPlayer {
         let mixer = voices[index].mixer
         let startVol = mixer.outputVolume
         let gen = voices[index].gen
-        voices[index].fadeTask = Task { @MainActor [weak self] in
+        // The ramp runs OFF the main actor: it used to await the main
+        // actor between its 8 × 2.5 ms steps, so a busy UI (the full-
+        // window grid repaint a pad press itself provokes) stretched
+        // the 20 ms fade to 100+ ms of audible tail — the hardware
+        // "release sticks" bug. Mixer volume and player stop() are
+        // thread-safe (scheduleStart's fallback already calls play()
+        // from a dispatch thread); only the slot bookkeeping hops back.
+        voices[index].fadeTask = Task.detached(priority: .userInitiated) { [weak self] in
             let steps = 8
             let stepSec = Self.releaseFadeSec / Double(steps)
             for step in 1...steps {
@@ -846,9 +930,11 @@ public final class ChopPlayer {
             }
             if Task.isCancelled { return }
             node.stop()
-            guard let self, self.voices.indices.contains(index),
-                  self.voices[index].gen == gen else { return }
-            self.voices[index].fadeTask = nil
+            await MainActor.run {
+                guard let self, self.voices.indices.contains(index),
+                      self.voices[index].gen == gen else { return }
+                self.voices[index].fadeTask = nil
+            }
         }
     }
 
