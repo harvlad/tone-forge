@@ -13,7 +13,8 @@ extension ModeCoordinator {
 
     /// What the long-press sheet shows for a grid pad:
     ///   - local sample assigned → source sheet (manage/override)
-    ///   - bound pack pad        → effects editor
+    ///   - bound pack pad        → effects editor (any pack: active
+    ///     quadrant/borrow, pinned foreign pad, Jam-64 overflow chop)
     ///   - empty sample slot     → source sheet (record/assign)
     ///   - hybrid note rows      → nothing
     ///   - jam in key            → nothing (the whole grid is notes)
@@ -44,23 +45,40 @@ extension ModeCoordinator {
     /// Long-press target for a grid pad: resolves the bound pack pad
     /// so the editor knows what it's editing. nil for unbound pads
     /// (empty slots, note rows) and for local-sample shadows (the
-    /// binding's packId is the scheduler's synthetic "local" pack,
-    /// which never matches the active pack).
+    /// source sheet manages those). Resolves through `padBinding` —
+    /// NOT the raw `padBindings` map — so Jam-64 overflow chops and
+    /// pads pinned from other packs open the effects editor too: the
+    /// old active-pack-only guard dropped them into the record/manage
+    /// source sheet ("Effects opens the wrong sheet" bug). Effects
+    /// overrides are keyed by (packId, padIdx) alone, so no active-
+    /// pack requirement exists in the data model.
     func padEffectsTarget(row: Int, col: Int) -> PadEffectsTarget? {
-        let grid = PadIndex.at(row: row, col: col)
-        guard let binding = padBindings[grid.rawValue],
-              let active = app.activeSamplePack,
-              active.pack.packId == binding.packId,
-              let pad = active.pack.pads.first(where: { $0.padIdx == binding.padIdx })
+        guard let b = padBinding(row: row, col: col),
+              b.packId != SampleScheduler.localPackId
         else { return nil }
+        // Manifest name/baseline from the pad's OWN pack (active,
+        // song-DNA, pinned, cached). An unresolvable pack still opens
+        // the editor — overrides don't need a manifest — with the
+        // painted grid label as the name.
+        let record = app.packPadRecord(packId: b.packId, padIdx: b.padIdx)
         return PadEffectsTarget(
-            packId: binding.packId,
-            padIdx: binding.padIdx,
-            padName: pad.name,
-            manifestBaseline: pad.effects,
+            packId: b.packId,
+            padIdx: b.padIdx,
+            padName: record?.name
+                ?? paintedLabel(row: row, col: col)
+                ?? "Pad \(b.padIdx + 1)",
+            manifestBaseline: record?.effects,
             gridRow: row,
             gridCol: col
         )
+    }
+
+    /// The label the painter drew at a cell — the name fallback for
+    /// pads whose pack manifest isn't resolvable (stale binding).
+    private func paintedLabel(row: Int, col: Int) -> String? {
+        let i = (row - 1) * 8 + (col - 1)
+        guard padVisuals.indices.contains(i) else { return nil }
+        return padVisuals[i].label
     }
 
     /// Preview a trimmed portion of a pad sample. Used by the waveform
@@ -80,9 +98,11 @@ extension ModeCoordinator {
     }
 
     /// Reset a pad to its default state: clear effects override, trim, loop.
+    /// Resolves through `padBinding` so Jam-64 overflow chops reset too
+    /// (the raw `padBindings` lookup made radial Reset a silent no-op
+    /// on them — same family as the dead-Chop bug).
     func resetPadToDefault(row: Int, col: Int) {
-        let grid = PadIndex.at(row: row, col: col)
-        guard let binding = padBindings[grid.rawValue] else { return }
+        guard let binding = padBinding(row: row, col: col) else { return }
 
         // Clear effects override (reverts to manifest baseline)
         app.sampleSettings.setPadEffectsOverride(
@@ -101,10 +121,17 @@ extension ModeCoordinator {
             chord: []
         )
 
+        // Clear the radial Loop toggle's per-pad override — "Reset"
+        // promised to clear loop state but only cleared the transform-
+        // chain render, so a pad flipped via radial Loop stayed flipped.
+        app.sampleScheduler.setPadLoopOverride(
+            packId: binding.packId, padIdx: binding.padIdx, nil)
+
         // Clear the committed trim (full range = untrimmed).
         app.sampleScheduler.setPadTrim(
             packId: binding.packId, padIdx: binding.padIdx,
             startFraction: 0, endFraction: 1)
+        rebuildLayout()
     }
 
     // MARK: - Pad preview (pack browser)
@@ -256,14 +283,17 @@ extension ModeCoordinator {
         return PadIndex.at(row: 5 + padIdx / 4, col: padIdx % 4 + 1).rawValue
     }
 
-    /// Trimmer target for a grid pad: provides sample info for waveform trimming.
+    /// Trimmer target for a grid pad: provides sample info for waveform
+    /// trimming. ANY bound pad can be trimmed — quadrant kit pad,
+    /// borrow pad, pinned foreign-pack pad, Jam-64 overflow chop, local
+    /// recording — because trims, waveforms and playback are all keyed
+    /// by (packId, padIdx) alone. The old active-pack-only guard is
+    /// what made radial Chop a dead slice on overflow pads. nil ONLY
+    /// when no decodable buffer is resident, and `radialActions` hides
+    /// the Chop slice in exactly that case, so nil never surfaces as a
+    /// silent no-op.
     func padTrimmerTarget(row: Int, col: Int) -> SampleTrimmerTarget? {
-        let grid = PadIndex.at(row: row, col: col)
-        guard let binding = padBindings[grid.rawValue],
-              let active = app.activeSamplePack,
-              active.pack.packId == binding.packId,
-              let pad = active.pack.pads.first(where: { $0.padIdx == binding.padIdx })
-        else { return nil }
+        guard let binding = padBinding(row: row, col: col) else { return nil }
 
         // Real waveform from the resident buffer (same transform-
         // resolved audio previewTrimmed plays). No buffer loaded means
@@ -275,12 +305,16 @@ extension ModeCoordinator {
             includeTrim: false
         ) else { return nil }
 
+        let record = app.packPadRecord(
+            packId: binding.packId, padIdx: binding.padIdx)
         let existing = app.sampleScheduler.padTrim(
             packId: binding.packId, padIdx: binding.padIdx)
         return SampleTrimmerTarget(
             packId: binding.packId,
             padIdx: binding.padIdx,
-            padName: pad.name,
+            padName: record?.name
+                ?? paintedLabel(row: row, col: col)
+                ?? "Pad \(binding.padIdx + 1)",
             gridRow: row,
             gridCol: col,
             durationSec: waveform.durationSec,

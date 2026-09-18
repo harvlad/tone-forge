@@ -109,17 +109,46 @@ extension ModeCoordinator {
         rebuildLayout()
     }
 
-    /// Hide a pack pad from the grid. The pad can be restored via
-    /// unhidePackPad or by switching packs.
+    /// Radial Delete: remove whatever the grid cell holds. Semantics
+    /// per pad class (each verified non-silent — Delete must visibly
+    /// change the grid):
+    ///   - explicit .packPad ASSIGNMENT (a pad pinned from any pack,
+    ///     incl. song-DNA chops) → clear the pin. `hidePad` alone was a
+    ///     silent no-op here: the assignment repainted the pad on the
+    ///     next rebuild. The active pack's own pad additionally hides,
+    ///     or the native painter would resurrect it at its home cell.
+    ///   - local sample / sequence slot → clear the assignment
+    ///     (clearLocalAssignment also stops a running sequence player).
+    ///   - active-pack quadrant/borrow pad, Jam-64 overflow chop → hide
+    ///     via the per-pack hidden set. `jamOverflowPads` filters that
+    ///     set, so an overflow Delete re-flows the 64 grid exactly like
+    ///     a quadrant Delete re-flows the kit (restore via
+    ///     unhidePackPad or re-assigning the chop from the picker).
     public func hidePackPad(row: Int, col: Int) {
         let grid = PadIndex.at(row: row, col: col)
         // Stop any running sequence on this pad regardless of pad type.
         sequencePadManager.stop(padIdx: grid.rawValue)
-        guard let binding = padBindings[grid.rawValue],
+        if let slot = app.padAssignmentStore.slot(
+            mode: appMode, padIdx: grid.rawValue
+        ) {
+            if case .packPad(let packId, let padIdx) = slot.ref {
+                app.sampleScheduler.stopVoices(padIdx: padIdx, packId: packId)
+                clearHostedTransforms(packId: packId, padIdx: padIdx)
+                replayBindings[grid.rawValue] = nil
+                if packId == app.activeSamplePack?.pack.packId {
+                    app.sampleSettings.hidePad(packId: packId, padIdx: padIdx)
+                }
+            }
+            clearLocalAssignment(gridPad: grid.rawValue)
+            return
+        }
+        // No explicit slot: resolve through padBinding so Jam-64
+        // overflow chops delete too (the raw padBindings lookup made
+        // Delete fall through to a no-op clear on them).
+        guard let binding = padBinding(row: row, col: col),
               binding.packId != SampleScheduler.localPackId
         else {
-            // It's a local sample (or a sequence pad), use
-            // clearLocalAssignment instead.
+            // Local-sample shadow without metadata, or empty cell.
             clearLocalAssignment(gridPad: grid.rawValue)
             return
         }

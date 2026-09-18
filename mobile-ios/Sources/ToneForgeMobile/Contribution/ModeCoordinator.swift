@@ -702,6 +702,36 @@ public final class ModeCoordinator: ObservableObject {
         rebuildLayout()
     }
 
+    /// The radial wheel offered for a grid pad — capability-driven so
+    /// no slice is a silent no-op: a slice appears only when its
+    /// handler can actually act on THIS pad.
+    ///   - saved-sequence pad → sequence wheel (edit / replace /
+    ///     delete). The full editing wheel used to show here; its
+    ///     Chop/Effects/Loop/Reset slices need a sample buffer the
+    ///     pad doesn't have.
+    ///   - any bound pad (quadrant kit pad, borrow pad, pinned
+    ///     foreign-pack pad, Jam-64 overflow chop, local recording) →
+    ///     full editing wheel. Chop drops off when no decodable
+    ///     buffer is resident — exactly when `padTrimmerTarget` would
+    ///     return nil, so a shown Chop always opens the trimmer.
+    ///   - empty cell → create wheel.
+    public func radialActions(row: Int, col: Int) -> [PadRadialAction] {
+        if assignedSequenceId(row: row, col: col) != nil {
+            return PadRadialAction.sequencePad
+        }
+        guard let b = padBinding(row: row, col: col) else {
+            return PadRadialAction.empty
+        }
+        var actions = PadRadialAction.assigned
+        if app.sampleScheduler.padWaveform(
+            packId: b.packId, padIdx: b.padIdx,
+            binCount: 1, includeTrim: false
+        ) == nil {
+            actions.removeAll { $0 == .chop }
+        }
+        return actions
+    }
+
     private func execute(_ action: AudioAction, for event: ContributionEvent) {
         // Sketch-record count-in: while the transport runs the
         // negative lead bar, live input is suppressed entirely so

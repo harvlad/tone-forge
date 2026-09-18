@@ -136,20 +136,27 @@ struct SamplePadGrid4x4: View {
                             // Anchor the wheel on the pressed pad; clamp
                             // keeps the full wheel on-screen near edges so
                             // it never clips under the pads or controls.
-                            // Empty pads get a single "Add Sound" action;
-                            // assigned pads get the full editing wheel.
+                            // The COORDINATOR decides which slices this
+                            // pad gets (create wheel, sequence wheel, or
+                            // the editing wheel with Chop hidden when
+                            // nothing is trimmable) so no slice is ever a
+                            // silent no-op; the view only drops slices its
+                            // host can't serve (Beat Capture needs an
+                            // onBeatCapture handler — Jam doesn't wire one).
                             let center = padCenter(
                                 localRow: row, localCol: col, size: geo.size
                             )
-                            let empty = isEmpty(gridRow: gridRow, gridCol: gridCol)
+                            var actions = coordinator.radialActions(
+                                row: gridRow, col: gridCol)
+                            if onBeatCapture == nil {
+                                actions.removeAll { $0 == .beatCapture }
+                            }
                             radialMenuState = makeRadialMenuState(
                                 gridRow: gridRow,
                                 gridCol: gridCol,
                                 center: center,
                                 containerSize: geo.size,
-                                actions: empty
-                                    ? PadRadialAction.empty
-                                    : PadRadialAction.assigned
+                                actions: actions
                             )
                         },
                         onLongPressDrag: { point in

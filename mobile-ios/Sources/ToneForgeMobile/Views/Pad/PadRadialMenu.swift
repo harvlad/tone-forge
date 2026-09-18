@@ -44,6 +44,15 @@ public enum PadRadialAction: String, CaseIterable, Sendable {
     public static let empty: [PadRadialAction] =
         [.addSound, .voiceRecord, .beatCapture, .sequence]
 
+    /// Actions shown on a pad holding a saved SEQUENCE (pattern pad):
+    /// edit the pattern, replace it with a sample, or remove it.
+    /// Chop/Effects/Loop/Reset act on a scheduler sample buffer this
+    /// pad doesn't have — offering them was a silent no-op (or worse:
+    /// on a Jam-64 overflow cell they hit the chop painted UNDER the
+    /// sequence).
+    public static let sequencePad: [PadRadialAction] =
+        [.delete, .addSound, .sequence]
+
     var label: String {
         switch self {
         case .effects:     return "Effects"

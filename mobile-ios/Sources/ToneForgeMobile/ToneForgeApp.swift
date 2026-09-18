@@ -536,7 +536,10 @@ public final class AppState: ObservableObject {
     /// once the stems for the current bundle have finished downloading.
     /// Cleared when a new bundle activates and repopulated when its
     /// downloads land. Empty when no bundle is loaded.
-    @Published public private(set) var songDnaPacks: [SongDnaPack] = []
+    /// internal(set): coordinator/radial tests seed hermetic song-DNA
+    /// fixtures directly (PadRadialActionTests) — production writes
+    /// stay inside AppState.
+    @Published public internal(set) var songDnaPacks: [SongDnaPack] = []
 
     /// The Song DNA pack the Jam Samples grid is currently showing —
     /// the selection (`jamSettings.selectedSamplePackId`) or the first
@@ -596,11 +599,18 @@ public final class AppState: ObservableObject {
     /// hardware Launchpad's 48 non-quadrant cells map these (see
     /// ModeCoordinator.jamSampleAt) so the full 8×8 reaches ALL of the
     /// song's samples while the quadrant holds the active kit.
+    /// Hidden chops (radial Delete on an overflow pad) are filtered
+    /// HERE, at the single list every overflow consumer reads — the
+    /// painter, the touch/hardware trigger mapping, and the ringing/
+    /// armed indicator all re-flow together, so Delete visibly removes
+    /// the pad instead of hiding it in a set nobody consults.
     public var jamOverflowPads: [JamSamplePad] {
         songDnaPacks.flatMap { dna in
-            dna.pack.pack.pads
+            let packId = dna.pack.pack.packId
+            return dna.pack.pack.pads
+                .filter { !sampleSettings.isPadHidden(packId: packId, padIdx: $0.padIdx) }
                 .sorted { $0.padIdx < $1.padIdx }
-                .map { JamSamplePad(packId: dna.pack.pack.packId, padIdx: $0.padIdx,
+                .map { JamSamplePad(packId: packId, padIdx: $0.padIdx,
                                     stem: dna.stem, name: $0.name, family: $0.family,
                                     category: nil) }
         }
@@ -1749,14 +1759,22 @@ public final class AppState: ObservableObject {
             ?? (try? bank.loadCached(packId: packId))
     }
 
+    /// Full manifest record for a pack pad in any resolvable pack —
+    /// the pad-effects / trimmer sheets need the name + effects
+    /// baseline for pads OUTSIDE the active pack (Jam-64 overflow
+    /// chops, pinned foreign-pack pads). nil = pack/pad unresolvable.
+    public func packPadRecord(packId: String, padIdx: Int) -> SamplePad? {
+        resolvedPack(forPackId: packId)?.pack.pads
+            .first { $0.padIdx == padIdx }
+    }
+
     /// Pad manifest info (name, family, loops) for a pack pad in any
     /// resolvable pack — used to paint a foreign-pack pad pinned to a
     /// single grid cell (multi-pack grids). nil = pack/pad unresolvable.
     public func packPadInfo(
         packId: String, padIdx: Int
     ) -> (name: String, family: SampleFamily, loops: Bool)? {
-        guard let resolved = resolvedPack(forPackId: packId),
-              let pad = resolved.pack.pads.first(where: { $0.padIdx == padIdx })
+        guard let pad = packPadRecord(packId: packId, padIdx: padIdx)
         else { return nil }
         return (pad.name, pad.family, pad.loopPointSec != nil)
     }
