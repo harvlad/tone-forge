@@ -38,7 +38,108 @@ __all__ = [
     "enforce_min_hold",
     "filter_chords_in_monophonic_sections",
     "collapse_same_root_regions",
+    "chord_lane_coverage_s",
+    "select_richest_chord_lane",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Per-stem lane selection (native-bundle plumbing parity with web)
+# ---------------------------------------------------------------------------
+
+# Non-harmonic stems never carry a truthful chord lane: the detector
+# traces the tune on ``vocals`` (monophonic melody) and hallucinates on
+# ``drums`` (unpitched broadband). The engine already prunes them from
+# ``chords_by_stem`` (analysis_worker.chord_input_stems), and the web
+# client hides them from its lane picker (jam.js). We exclude them here
+# too so a stray legacy lane can't win the coverage race.
+_NON_HARMONIC_CHORD_STEMS = frozenset({"vocals", "drums"})
+
+
+def chord_lane_coverage_s(lane: Any) -> float:
+    """Summed region seconds for one chord lane.
+
+    Coverage — not region count — is the ranking signal: a lane of 77
+    half-beat slivers must not outrank one long honest lane, and vice
+    versa (this is exactly the Cross Bones failure: a 22s residual
+    ``other`` lane vs a 115s guitar lane). Accepts either dict-shaped
+    chord records (``start_s``/``end_s``, with ``start``/``start_time``
+    fallbacks) or ``contracts.Chord`` objects. Non-iterables and bad
+    rows contribute 0.
+    """
+    if not lane:
+        return 0.0
+    total = 0.0
+    for c in lane:
+        if isinstance(c, Mapping):
+            start = c.get("start_s")
+            if start is None:
+                start = c.get("start", c.get("start_time", 0.0))
+            end = c.get("end_s")
+            if end is None:
+                end = c.get("end", c.get("end_time", 0.0))
+        else:
+            start = getattr(c, "start_s", None)
+            end = getattr(c, "end_s", None)
+        try:
+            total += max(0.0, float(end) - float(start))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def select_richest_chord_lane(
+    chords_by_stem: Any,
+    fallback: Any = None,
+) -> Tuple[Optional[str], list]:
+    """Pick the per-stem chord lane with the richest harmonic coverage.
+
+    Server-side twin of the web client's ``_richestChordLane`` (jam.js,
+    commit d6f483a1). The native bundle historically shipped the flat
+    legacy ``other`` lane (~10% coverage on Cross Bones) while the real
+    13-chord guitar progression sat in ``chords_by_stem`` and never
+    reached iOS/desktop. This mirrors web's default so every surface
+    starts on the same populated lane.
+
+    Selection rule (identical semantics to the web):
+      * exclude the non-harmonic ``vocals``/``drums`` lanes,
+      * rank surviving lanes by summed region seconds (coverage),
+      * break ties by sorted stem name for determinism.
+
+    Args:
+        chords_by_stem: The persisted ``chords_by_stem`` mapping
+            (stem name -> list of chord-dicts). Anything that isn't a
+            non-empty mapping falls straight through to ``fallback``.
+        fallback: The legacy flat lane (``result['chords']``) returned
+            when no per-stem lane is usable — keeps legacy bundles and
+            single-lane analyses behaving exactly as before.
+
+    Returns:
+        ``(stem_name, lane)`` — ``stem_name`` is ``None`` when the
+        fallback is used. ``lane`` is always a fresh list (never the
+        caller's object) so downstream normalisation can mutate freely.
+    """
+    if isinstance(chords_by_stem, Mapping) and chords_by_stem:
+        best_name: Optional[str] = None
+        best_lane: Optional[list] = None
+        best_cover = -1.0
+        for name in sorted(str(k) for k in chords_by_stem.keys()):
+            if name in _NON_HARMONIC_CHORD_STEMS:
+                continue
+            lane = chords_by_stem.get(name)
+            if not isinstance(lane, (list, tuple)):
+                continue
+            cover = chord_lane_coverage_s(lane)
+            if cover > best_cover:
+                best_cover = cover
+                best_name = name
+                best_lane = list(lane)
+        # A lane wins only when it actually carries coverage; an all-empty
+        # per-stem dict falls back to the legacy flat lane rather than
+        # returning an empty winner.
+        if best_lane is not None and best_cover > 0.0:
+            return best_name, best_lane
+    return None, list(fallback) if isinstance(fallback, (list, tuple)) else []
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +225,18 @@ def detect_chords(
         chords, _ = btc_result
         # BTC can return empty on synthetic/unusual audio; fall back
         if chords:
+            # Stabilise the shipped BTC path. Previously this early-
+            # returned raw frame-argmax regions: enforce_min_hold +
+            # collapse_same_root_regions ran ONLY on the chroma+Viterbi
+            # fallback and the ``_with_key`` variant, so the primary
+            # engine emitted sub-beat fragments and m/M flicker straight
+            # to the UI. Apply the same two stability passes here so the
+            # winner is stabilised too, not just the fallback. Both are
+            # no-ops without a beat grid (min-hold) or collapse only
+            # same-root runs (no re-labelling across roots). Order mirrors
+            # detect_chords_with_key: min-hold, then same-root collapse.
+            chords = enforce_min_hold(chords, beats_s, min_beats=1.0)
+            chords = collapse_same_root_regions(chords, beats_s)
             return chords
 
     # Fallback: chroma+Viterbi
@@ -322,10 +435,12 @@ def detect_chords_btc_with_key(
     plus the bass stem, peak-normalised sum (the exact config the
     eval measured — raw BTC regions, no post-passes).
 
-    BTC emits no confidence (its head returns argmax + runner-up
-    index only), so regions carry confidence 1.0; downstream weighted
-    passes degrade to duration weighting. Key comes from
-    ``_key_from_chords`` (same Krumhansl profiles as production).
+    BTC's head returns argmax + runner-up index only, but ``btc_chords``
+    recovers the discarded softmax posterior from the same output
+    projection, so each region now carries a real [0,1] confidence
+    (mean top-1 posterior across its frames). Legacy region dicts
+    without the key default to 1.0. Key comes from ``_key_from_chords``
+    (same Krumhansl profiles as production).
 
     Returns None on any failure and latches, so callers fall back to
     ``detect_chords_with_key`` without re-paying the failure per song.
@@ -362,7 +477,12 @@ def detect_chords_btc_with_key(
             start_s=float(r["start"]),
             end_s=float(r["end"]),
             symbol=str(r["label"]),
-            confidence=1.0,
+            # Real posterior (mean top-1 softmax over the region's frames),
+            # surfaced by btc_chords so the UI can dim/gate uncertain
+            # chords. Legacy region dicts predating the posterior recovery
+            # carry no "confidence" key — default to 1.0 so old callers /
+            # cached fixtures behave exactly as before. Clamp defensively.
+            confidence=max(0.0, min(1.0, float(r.get("confidence", 1.0)))),
         )
         for r in regions
     )

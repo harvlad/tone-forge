@@ -219,7 +219,11 @@ def detect_chords_btc(
     """Run BTC on an audio array; return chord regions.
 
     Output: sorted ``[{"start": s, "end": s, "label": tone-forge
-    symbol}]``. N/X frames produce gaps rather than regions.
+    symbol, "confidence": p}]``. N/X frames produce gaps rather than
+    regions. ``confidence`` is the mean top-1 softmax posterior across
+    the region's frames — a real [0,1] certainty, not the historical
+    hard-stamped 1.0 (the argmax head discards the posterior; we recover
+    it from the same output projection).
     """
     import numpy as np
     import torch
@@ -239,6 +243,7 @@ def detect_chords_btc(
     time_unit = _INST_LEN_S / _TIMESTEP  # upstream frame-time convention
 
     preds: List[int] = []
+    confs: List[float] = []
     with torch.no_grad():
         tens = torch.tensor(feature, dtype=torch.float32).unsqueeze(0).to(device)
         for t in range(num_instance):
@@ -247,25 +252,53 @@ def detect_chords_btc(
             )
             prediction, _second = model.output_layer(encoded)
             preds.extend(int(v) for v in prediction.squeeze(0).cpu().tolist())
+            # Real per-frame posterior. The vendored SoftmaxOutputLayer
+            # returns argmax indices only (probs_out=False), throwing the
+            # softmax mass away — which is why every shipped chord used to
+            # carry a fabricated confidence of 1.0. Recover it by re-running
+            # the SAME output projection the head already applied, then
+            # softmax: no change to the vendored model, and the top-1
+            # probability is a genuine [0,1] certainty the UI can dim on.
+            logits = model.output_layer.output_projection(encoded)
+            top_probs = torch.softmax(logits, dim=-1).max(dim=-1).values
+            confs.extend(float(v) for v in top_probs.squeeze(0).cpu().tolist())
     preds = preds[:n_frames]  # drop padding frames
+    confs = confs[:n_frames]
+
+    def _region_conf(a: int, b: int) -> float:
+        """Mean top-1 posterior across frames [a, b). Defaults to 1.0 when
+        no posterior was captured (defensive: keeps legacy behaviour if the
+        projection ever yields nothing)."""
+        if not confs or b <= a:
+            return 1.0
+        span = confs[a:b]
+        if not span:
+            return 1.0
+        return max(0.0, min(1.0, sum(span) / len(span)))
 
     regions: List[Dict[str, Any]] = []
     if not preds:
         return regions
-    start = 0.0
+    start_frame = 0
     prev = preds[0]
     for i in range(1, len(preds)):
         if preds[i] != prev:
             symbol = btc_label_to_symbol(idx_to_label[prev])
             if symbol is not None:
-                regions.append(
-                    {"start": start, "end": i * time_unit, "label": symbol}
-                )
-            start = i * time_unit
+                regions.append({
+                    "start": start_frame * time_unit,
+                    "end": i * time_unit,
+                    "label": symbol,
+                    "confidence": _region_conf(start_frame, i),
+                })
+            start_frame = i
             prev = preds[i]
     symbol = btc_label_to_symbol(idx_to_label[prev])
     if symbol is not None:
-        regions.append(
-            {"start": start, "end": len(preds) * time_unit, "label": symbol}
-        )
+        regions.append({
+            "start": start_frame * time_unit,
+            "end": len(preds) * time_unit,
+            "label": symbol,
+            "confidence": _region_conf(start_frame, len(preds)),
+        })
     return regions
