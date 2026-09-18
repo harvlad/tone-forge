@@ -1455,3 +1455,77 @@ placement, toggle re-lay, stamped pipeline for all 64 flood pads,
 compact press gating), ChopPlayerBurstTests (flood-mounted burst:
 zero press-path play(), fast-release registration on every mount
 route, prewarmFiles cache hit), BorrowLayoutTests (compact block).
+
+## D-038: Receive-thread fast PRESS — armed per-pad plans (the press twin of D-033)
+
+**Date:** 2026-09-18
+**Decision:** instant-mode pad presses now SOUND from the MIDI receive
+thread, within ~a render quantum of the packet, without touching the
+main actor. Real-hardware capture on the D-037 build (188 events,
+line-buffered) confirmed the last slow piece: parked voices (D-032)
+removed play() from the press path, but the scheduleBuffer still rode
+the MIDI→main hop, and each press's own SwiftUI commit (64 flood tiles
++ activePads mutations) queued that hop — press→trigger 15–44 ms
+typical under hammering, spikes 81/138 ms, against a 0.3–0.5 ms clear-
+hop baseline.
+
+**Mechanism (ChopPlayer):**
+- **Armed plans.** The main actor pre-derives, per visible pad, exactly
+  what its instant press would schedule — the baked loop body (same
+  bake-cache keys as the live trigger), effects, and the join rule
+  (`.zero` = One-Shot sample top; `.era` = Follow mid-body join). The
+  session re-arms via `LaunchpadController.onFastPressStateChanged`
+  (every grid mount/re-lay funnels through `repaint()`, plus playback-
+  mode and section-gate changes) and after session attach.
+- **Atomic parked claim.** Parked voices live in ONE lock-boxed pool;
+  BOTH claim sides (receive-thread fast press and the main-path
+  trigger) pop it and take ownership with the voice gate's new
+  compare-and-advance (`advanceIfCurrent`). The old main flow advanced
+  the epoch a few statements AFTER picking the slot — a window where a
+  concurrent fast fire would queue a looping body under the main
+  press's buffer. Every parking site (warmUpPool, fade terminal,
+  natural one-shot end) pushes into the pool.
+- **Fire → adopt/abort.** A fire schedules head+body on the parked
+  node (no control call), registers the fast-RELEASE ref immediately
+  (a pad-up can beat the press's own hop), and leaves a FastFire
+  token. The trailing main trigger ADOPTS it — bookkeeping only: key,
+  takeover, playhead baseline back-dated to the fire, prior-voice
+  rotation — never a second schedule. A stale fire (plan generation
+  moved between fire and hop) is refused and killed; the press replays
+  against the current grid. Un-adopted fires are aborted by stopAll
+  (grid swaps) and reattach. claimVoice skips fire-reserved slots.
+- **Invalidation.** `disarmFastPresses` is one synchronous generation
+  bump; `armFastPresses` bumps BEFORE baking and abandons itself if
+  superseded mid-build. Any press in an invalidation window takes the
+  main path. Era anchors for the Follow join are snapshotted from the
+  controller after every padDown/replayArm (`onEraChanged`).
+
+**Scope, deliberately:** quantized Latch (and section-gated surfaces)
+keep main-path authority — they need transport state, and their
+stamped clocks already make the quantize math press-true. `drumfile:`
+one-shot FILE pads stay main-path in V1 (a fast one-shot needs a
+completion handler the fire can't hand to the adoption cleanly).
+Dropped on the fast lane: the bake's sub-50 ms `shiftSec` grid
+compensation (quantized-launch alignment; instant gates fire NOW) and
+per-press velocity (grid pads are gates on every surface). MIDI-Learn
+pads ride the same engine via `MIDIKeyboardTransport.setFastPadTap`
+(receive-thread routing snapshot; same pure `padCell` mapping as the
+stamped lane).
+
+**Release verification (the "194 ms padUp" scare):** the fast RELEASE
+is engaged — every mount route registers padTags at trigger (pinned
+since D-037), and the fast lane registers at FIRE time too. The padUp
+log line measures the MAIN HOP by design; 50–190 ms there is
+bookkeeping/LED/recording lag, not audio. So the lines were renamed
+(`press→mainTrigger`, `padUp→mainRelease`) and both now carry the
+audible-lane tallies (`[fastPress 12/0 · fastRelease 12/0]`,
+fires/misses) via `latencyLaneProbe` — a captured session shows at a
+glance whether audio ran pre-hop. All printing stays on main;
+instrumentation is never receive-thread work.
+
+**Measured:** receive-thread press cost mean 0.020 ms, worst 0.049 ms
+(12-pad burst test) — ~500× under the ~10.7 ms render quantum. Pinned
+by ChopPlayerBurstTests (blocked-main fire + adoption, stale-plan /
+stale-fire invalidation, cost bound, era join), USBLaunchpadTransport-
+Tests (pre-hop down-tap with stamps), MIDIKeyboardTransportTests
+(routed-pads-only pre-hop tap, lane agreement).

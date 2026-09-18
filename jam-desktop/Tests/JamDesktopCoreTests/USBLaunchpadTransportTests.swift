@@ -170,6 +170,39 @@ final class USBLaunchpadTransportTests: XCTestCase {
         ], "tap fires pre-hop, releases only, grid notes only")
     }
 
+    /// The receive-thread pad-DOWN tap (D-038): fires the instant a
+    /// press decodes — with the receive-thread clocks, BEFORE the main
+    /// hop — and only for presses (vel > 0), grid notes, channel 1.
+    /// This is the seam the fast-press engine (armed plans + parked
+    /// voices) rides so the audible start never waits on a stalled
+    /// main queue.
+    func testFastPadDownTapFiresOnReceiveThreadWithStamps() {
+        final class PressBox: @unchecked Sendable {
+            var presses: [(pad: LaunchpadPad, song: Double, host: UInt64)] = []
+        }
+        let transport = makeTransport()
+        let box = PressBox()
+        transport.setFastPadDownTap { pad, song, host in
+            box.presses.append((pad, song, host))
+        }
+        midi.plugInLaunchpad()
+
+        // No queue drain: anything visible here happened pre-hop.
+        midi.receive([
+            .noteOn(channel: 0, note: 11, velocity: 127),   // press: taps
+            .noteOn(channel: 0, note: 11, velocity: 0),     // release: no tap
+            .noteOff(channel: 0, note: 45, velocity: 64),   // release: no tap
+            .noteOn(channel: 1, note: 11, velocity: 90),    // wrong channel
+            .noteOn(channel: 0, note: 9, velocity: 90),     // not a grid note
+        ], hostTime: 777)
+
+        XCTAssertEqual(box.presses.count, 1,
+                       "presses only, grid notes only, channel 1 only")
+        XCTAssertEqual(box.presses[0].pad, LaunchpadPad(row: 7, col: 0))
+        XCTAssertEqual(box.presses[0].song, 42.5)   // receive-thread stamp
+        XCTAssertEqual(box.presses[0].host, 777)    // packet host stamp
+    }
+
     func testVelocityScalesAndZeroPacketStampFallsBack() {
         let transport = makeTransport()
         midi.plugInLaunchpad()

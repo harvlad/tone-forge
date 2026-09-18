@@ -358,6 +358,38 @@ final class SessionController: ObservableObject {
         usb.setFastPadUpTap { pad in
             fastReleasePlayer.padReleased(tag: pad.row * 8 + pad.col)
         }
+        // RECEIVE-THREAD press tap (D-038, the press twin): instant-mode
+        // presses fire their pre-armed plan on a parked voice within a
+        // render quantum of the packet — the audible start no longer
+        // waits on the MIDI→main hop, which a press's own SwiftUI
+        // commit stalled for 100–400 ms under same-pad hammering. The
+        // stamped padDown still follows on main and ADOPTS the fired
+        // voice (bookkeeping/LED/recording); quantized Latch presses
+        // have no plan and play through the main path as before.
+        usb.setFastPadDownTap { pad, songSeconds, hostTime in
+            fastReleasePlayer.padPressed(
+                tag: pad.row * 8 + pad.col,
+                songSeconds: songSeconds, hostTime: hostTime)
+        }
+        // Fast-press plans follow the surface (grid/mode/gate), and the
+        // Follow join follows the era anchors.
+        launchpad.onFastPressStateChanged = { [weak self] in
+            self?.rearmFastPressPlans()
+        }
+        launchpad.onEraChanged = { [weak self] freerun, lockAnchor, rolling in
+            self?.chopPlayer.updateFastPressEra(
+                freerunAnchorHostSeconds: freerun,
+                lockAnchorSongSeconds: lockAnchor,
+                transportRolling: rolling)
+        }
+        // [PadLatency] lines carry the audible-lane tallies, so a hop
+        // spike can't be mistaken for audio lag when the fast lanes
+        // fired (the 2026-09-18 "release regressed to 194 ms" scare was
+        // the HOP measurement doing its job while the fade had begun on
+        // the MIDI thread).
+        launchpad.latencyLaneProbe = { [weak self] in
+            self?.chopPlayer.fastLaneSummary ?? "?"
+        }
         // Hardware function buttons (Launchpad Pro MK3): the approved
         // assignment table + LED contract live in the Core
         // LaunchpadControlSurface (D-036, test-pinned); this class only
@@ -686,6 +718,20 @@ final class SessionController: ObservableObject {
         midiPadMap.onMapChanged = { [weak keyboard] map in
             keyboard?.noteRouting = MIDIPadMapStore.noteRouting(map: map)
         }
+        // MIDI-Learn pads ride the SAME receive-thread fast press/release
+        // engine as the Launchpad hardware (D-038): routed pad notes fire
+        // their armed plan / begin their fade the instant the packet
+        // decodes; the stamped event still follows on main through the
+        // shared padDown/padUp pipeline below.
+        keyboard.setFastPadTap { pad, down, songSeconds, hostTime in
+            let tag = pad.row * 8 + pad.col
+            if down {
+                fastReleasePlayer.padPressed(
+                    tag: tag, songSeconds: songSeconds, hostTime: hostTime)
+            } else {
+                fastReleasePlayer.padReleased(tag: tag)
+            }
+        }
         keyboard.onContribution = { [weak self] event in
             guard let self else { return }
             self.ensureEngineStarted()
@@ -990,6 +1036,11 @@ final class SessionController: ObservableObject {
         // session's first presses (and every rapid retrigger) start
         // their buffers with zero play() control roundtrips.
         await chopPlayer.warmUpPool()
+        // Arm the fast-press plans for the preset grid NOW: the
+        // configure-time hook above fired before the stems loaded, so
+        // its arm was empty by construction. The auto-kit mount below
+        // re-arms again for the kit grid.
+        rearmFastPressPlans()
         sequencer.stop()
         sequencer.songBPM = session.bundle.meta.tempoBpm ?? 120
         // Joining Link alone: seed the session with the song's tempo so
@@ -1152,6 +1203,63 @@ final class SessionController: ObservableObject {
               assignment.chop.assetId != nil else { return .neutral }
         return padFXStore.effects(packId: packId, padIdx: assignment.chop.idx)
             ?? .neutral
+    }
+
+    /// (Re)arm the receive-thread fast-press plans for the CURRENT
+    /// surface (D-038). Called from the controller's
+    /// onFastPressStateChanged hook — every grid mount/re-lay (repaint
+    /// funnel), mode change and section-gate change — plus explicitly
+    /// after session attach (the configure-time hook fires before the
+    /// stems load, so that first arm is empty by construction).
+    ///
+    /// Disarm is SYNCHRONOUS (one generation bump): a press racing the
+    /// async rebuild takes the main path, never a stale plan. Plans are
+    /// armed only for the INSTANT surface — One-Shot/Follow with no
+    /// section gate; quantized Latch launches need transport state and
+    /// keep main-path authority (their stamped clocks already make the
+    /// quantize math press-true). `drumfile:` one-shot FILE pads stay
+    /// main-path too (V1: fast plans are loop bodies; a fast one-shot
+    /// needs a completion the receive thread can't attach — D-038).
+    @MainActor
+    func rearmFastPressPlans() {
+        chopPlayer.disarmFastPresses()
+        let mode = launchpad.playbackMode
+        guard !mode.quantizesLaunch, launchpad.sectionGate == nil else { return }
+        let join: ChopPlayer.FastPressJoin = mode.startsFromZero ? .zero : .era
+        // Same loop-bake parameters as onTrigger/prewarm, so the plan
+        // bodies ARE the buffers the main lane would derive (cache-shared).
+        let linked = linkSync.enabled && linkSync.peers > 0
+        let bpm = linked ? linkSync.tempo
+                         : (attachedBundle?.meta.tempoBpm ?? 0)
+        let barSeconds = bpm > 0 ? (60.0 / bpm) * 4.0 : 0
+        let cycle = launchpad.loopLengthSeconds
+        var items: [ChopPlayer.FastPressArming] = []
+        for (pad, a) in launchpad.assignments where launchpad.isPadVisible(pad) {
+            let tag = pad.row * 8 + pad.col
+            if let aid = a.chop.assetId, aid.hasPrefix("drumfile:") {
+                continue   // one-shot file pads: main path (see above)
+            }
+            if let aid = a.chop.assetId, aid.hasPrefix("borrowfile:") {
+                guard let url = drumKitSampleFiles[a.chop.idx] else { continue }
+                items.append(.init(
+                    padTag: tag, assignment: a, fileURL: url,
+                    effects: effectsForPad(a), crossfadeMs: 12,
+                    loopBarSeconds: barSeconds, cycleSeconds: cycle))
+                continue
+            }
+            let rileyFade = a.chop.crossfadeMs ?? 0
+            let xfade = rileyFade > 0 ? rileyFade
+                                      : ChopPlayer.defaultPadCrossfadeMs
+            items.append(.init(
+                padTag: tag, assignment: a, fileURL: nil,
+                effects: effectsForPad(a), crossfadeMs: xfade,
+                loopBarSeconds: barSeconds, cycleSeconds: cycle))
+        }
+        guard !items.isEmpty else { return }
+        let plan = items
+        Task { [weak self] in
+            await self?.chopPlayer.armFastPresses(plan, join: join)
+        }
     }
 
     /// Rebuild the arrangement runtime from the (restored/reset)

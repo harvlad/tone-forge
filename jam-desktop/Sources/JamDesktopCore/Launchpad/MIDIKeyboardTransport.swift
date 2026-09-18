@@ -26,6 +26,7 @@
 // main-actor hop, per the ContributionEvent contract.
 
 import Foundation
+import os
 import ToneForgeEngine
 
 @MainActor
@@ -57,7 +58,59 @@ public final class MIDIKeyboardTransport: ObservableObject {
     public static let defaultPadBaseNote = 36
 
     /// Live routing. AppState drives this from the persisted setting.
-    @Published public var noteRouting: NoteRouting = .synth
+    /// Mirrored into a lock box on every set so the RECEIVE THREAD can
+    /// resolve pad cells for the fast press/release taps (D-038)
+    /// without touching the main actor.
+    @Published public var noteRouting: NoteRouting = .synth {
+        didSet {
+            let routing = noteRouting
+            fastRoutingBox.withLock { $0 = routing }
+        }
+    }
+    private let fastRoutingBox =
+        OSAllocatedUnfairLock<NoteRouting>(initialState: .synth)
+
+    /// RECEIVE-THREAD pad tap (D-038): fires the instant a routed pad
+    /// note decodes — press AND release, with the receive-thread
+    /// clocks — before the main hop, so MIDI-Learn pads ride the same
+    /// fast press/release engine as the Launchpad hardware. Audio-only;
+    /// the stamped event still follows on main through onContribution →
+    /// launchpad.padDown/padUp with all bookkeeping.
+    private let fastPadBox = OSAllocatedUnfairLock<
+        (@Sendable (LaunchpadPad, _ down: Bool, _ songSeconds: Double, _ hostTime: UInt64) -> Void)?
+    >(initialState: nil)
+
+    /// Install (or clear) the receive-thread pad tap.
+    public func setFastPadTap(
+        _ tap: (@Sendable (LaunchpadPad, Bool, Double, UInt64) -> Void)?
+    ) {
+        fastPadBox.withLock { $0 = tap }
+    }
+
+    /// Note → contribution-convention grid cell for the current routing
+    /// (nil = the note doesn't drive a pad: synth routing, out-of-range
+    /// samplePads note, unmapped mappedPads note — dropped by design).
+    /// Pure and nonisolated so the receive thread and `noteEvent` share
+    /// one mapping — a drifted twin here would fast-fire one pad and
+    /// main-trigger another.
+    nonisolated static func padCell(
+        note: Int, routing: NoteRouting
+    ) -> (row: Int, col: Int)? {
+        let idx: Int
+        switch routing {
+        case .synth:
+            return nil
+        case .samplePads(let baseNote):
+            idx = note - baseNote
+        case .mappedPads(let map):
+            guard let mapped = map[note] else { return nil }
+            idx = mapped
+        }
+        guard (0..<16).contains(idx) else { return nil }
+        // Pack quadrant mapping (ModeCoordinator.sampleQuadrantContent):
+        // pad idx N → grid row 8 - N/4, col N%4 + 1.
+        return (row: 8 - idx / 4, col: idx % 4 + 1)
+    }
 
     // MARK: - Published state
 
@@ -139,11 +192,35 @@ public final class MIDIKeyboardTransport: ObservableObject {
         connectedEndpoints = []
 
         let nowProvider = self.nowProvider
+        let fastPadBox = self.fastPadBox
+        let fastRoutingBox = self.fastRoutingBox
         for endpoint in desired {
             let connected = midi.connectInput(endpoint) { [weak self] messages, packetHostTime in
                 // MIDI receive thread: stamp BEFORE the hop.
                 let now = nowProvider()
                 let hostTime = packetHostTime != 0 ? packetHostTime : now.host
+                // Fast pad tap (D-038), STILL on the receive thread:
+                // routed pad notes fire/release through the fast-press
+                // engine within a render quantum; the stamped event
+                // follows on main with all bookkeeping.
+                if let tap = fastPadBox.withLock({ $0 }) {
+                    let routing = fastRoutingBox.withLock { $0 }
+                    for message in messages {
+                        let note: UInt8, down: Bool
+                        switch message {
+                        case .noteOn(_, let n, let v) where v > 0:
+                            note = n; down = true
+                        case .noteOn(_, let n, _), .noteOff(_, let n, _):
+                            note = n; down = false
+                        default:
+                            continue
+                        }
+                        if let cell = Self.padCell(note: Int(note), routing: routing),
+                           let pad = PadEventMapping.launchpadPad(row: cell.row, col: cell.col) {
+                            tap(pad, down, now.song, hostTime)
+                        }
+                    }
+                }
                 DispatchQueue.main.async {
                     self?.deliver(messages, songSeconds: now.song, hostTime: hostTime)
                 }
@@ -186,19 +263,14 @@ public final class MIDIKeyboardTransport: ObservableObject {
         switch noteRouting {
         case .synth:
             kind = .midiNote(note: Int(note), velocity: Int(velocity), on: on)
-        case .samplePads(let baseNote):
-            let idx = Int(note) - baseNote
-            guard (0..<16).contains(idx) else { return }
-            // Pack quadrant mapping (ModeCoordinator.sampleQuadrantContent):
-            // pad idx N → grid row 8 - N/4, col N%4 + 1.
-            let row = 8 - idx / 4
-            let col = idx % 4 + 1
-            kind = on ? .padDown(row: row, col: col) : .padUp(row: row, col: col)
-        case .mappedPads(let map):
-            guard let idx = map[Int(note)], (0..<16).contains(idx) else { return }
-            let row = 8 - idx / 4
-            let col = idx % 4 + 1
-            kind = on ? .padDown(row: row, col: col) : .padUp(row: row, col: col)
+        case .samplePads, .mappedPads:
+            // Same pure mapping the receive-thread fast tap uses
+            // (padCell) — one twin, so both lanes always name the same
+            // grid cell. Unroutable notes are dropped by design.
+            guard let cell = Self.padCell(note: Int(note), routing: noteRouting)
+            else { return }
+            kind = on ? .padDown(row: cell.row, col: cell.col)
+                      : .padUp(row: cell.row, col: cell.col)
         }
         onContribution?(ContributionEvent(
             source: .midiKeyboard,

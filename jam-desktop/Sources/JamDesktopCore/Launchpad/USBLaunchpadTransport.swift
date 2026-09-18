@@ -92,6 +92,27 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
     public func setFastPadUpTap(_ tap: (@Sendable (LaunchpadPad) -> Void)?) {
         fastPadUpBox.withLock { $0 = tap }
     }
+
+    /// RECEIVE-THREAD pad-DOWN tap (D-038, the press twin of the pad-up
+    /// tap above): fires ON the MIDI thread the instant a press decodes,
+    /// with the receive-thread clocks, BEFORE the main hop — the seam
+    /// the fast-press engine (armed plans + parked voices) rides so the
+    /// audible start never waits on a stalled main queue. Audio-only and
+    /// idempotent under the stamped padDown that still follows on main
+    /// (the main trigger ADOPTS the fire; ChopPlayer's fire/adoption
+    /// epoch contract). Lock-boxed: assigned on main, read on the
+    /// receive thread.
+    @ObservationIgnored private let fastPadDownBox =
+        OSAllocatedUnfairLock<
+            (@Sendable (LaunchpadPad, _ songSeconds: Double, _ hostTime: UInt64) -> Void)?
+        >(initialState: nil)
+
+    /// Install (or clear) the receive-thread pad-down tap.
+    public func setFastPadDownTap(
+        _ tap: (@Sendable (LaunchpadPad, Double, UInt64) -> Void)?
+    ) {
+        fastPadDownBox.withLock { $0 = tap }
+    }
     /// Events arrive pre-stamped from the MIDI thread.
     @ObservationIgnored public var onContribution: ((ContributionEvent) -> Void)?
     /// Outer-button presses (Bool = down).
@@ -190,26 +211,37 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
     private func connect(source: MIDIEndpoint, destination: MIDIEndpoint) {
         let nowProvider = self.nowProvider
         let fastPadUpBox = self.fastPadUpBox
+        let fastPadDownBox = self.fastPadDownBox
         let connected = midi.connectInput(source) { [weak self] messages, packetHostTime in
             // MIDI receive thread: stamp BEFORE the hop.
             let now = nowProvider()
             let hostTime = packetHostTime != 0 ? packetHostTime : now.host
-            // Fast pad-up tap, STILL on the receive thread: release
-            // decoding mirrors deliver() (Note On vel-0 or Note Off,
-            // channel 1) through the same pure protocol mapping, so the
-            // audio fade can begin ~a render quantum after the packet
-            // instead of after the main hop.
-            if let tap = fastPadUpBox.withLock({ $0 }) {
+            // Fast pad taps, STILL on the receive thread: press/release
+            // decoding mirrors deliver() (Note On ch1; vel>0 = press,
+            // vel-0 or Note Off = release) through the same pure
+            // protocol mapping, so the audible start (armed-plan fire,
+            // D-038) and the audible fade (D-033) both begin ~a render
+            // quantum after the packet instead of after the main hop.
+            let downTap = fastPadDownBox.withLock { $0 }
+            let upTap = fastPadUpBox.withLock { $0 }
+            if downTap != nil || upTap != nil {
                 for message in messages {
-                    let released: UInt8?
                     switch message {
-                    case .noteOn(0, let note, 0):  released = note
-                    case .noteOff(0, let note, _): released = note
-                    default:                       released = nil
-                    }
-                    if let note = released,
-                       let pad = LaunchpadProMK3Protocol.padIndex(forNote: note) {
-                        tap(LaunchpadPad(row: 8 - pad.row, col: pad.col - 1))
+                    case .noteOn(0, let note, let velocity) where velocity > 0:
+                        if let downTap,
+                           let pad = LaunchpadProMK3Protocol.padIndex(forNote: note) {
+                            downTap(
+                                LaunchpadPad(row: 8 - pad.row, col: pad.col - 1),
+                                now.song, hostTime)
+                        }
+                    case .noteOn(0, let note, _),
+                         .noteOff(0, let note, _):
+                        if let upTap,
+                           let pad = LaunchpadProMK3Protocol.padIndex(forNote: note) {
+                            upTap(LaunchpadPad(row: 8 - pad.row, col: pad.col - 1))
+                        }
+                    default:
+                        break
                     }
                 }
             }

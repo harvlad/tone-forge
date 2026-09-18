@@ -54,6 +54,19 @@ final class VoiceGate: @unchecked Sendable {
     func ifCurrent(_ epoch: Int, _ body: () -> Void) {
         lock.withLock { if $0 == epoch { body() } }
     }
+    /// ATOMIC CLAIM (D-038): advance iff `epoch` is still current and
+    /// return the new epoch, else nil. This is how the receive-thread
+    /// fast press and the main-path claim arbitrate a parked voice —
+    /// exactly one side can win, and the loser's refs are instantly
+    /// stale. Compare-and-advance must be one critical section; a
+    /// current() check followed by advance() would let both sides pass.
+    func advanceIfCurrent(_ epoch: Int) -> Int? {
+        lock.withLock { state -> Int? in
+            guard state == epoch else { return nil }
+            state += 1
+            return state
+        }
+    }
 }
 
 @MainActor
@@ -171,9 +184,19 @@ public final class ChopPlayer {
     /// even though the main-path handling itself costs ~0.1 ms. This
     /// entry costs ~µs on the receive thread (dict lookup + task spawn)
     /// and the fade begins within a render quantum of the packet.
-    nonisolated public func padReleased(tag: Int) {
-        guard let ref = fastReleaseRefs.withLock({ $0[tag] }) else { return }
-        guard ref.gate.current() == ref.epoch else { return }   // reused/released
+    @discardableResult
+    nonisolated public func padReleased(tag: Int) -> Bool {
+        guard let ref = fastReleaseRefs.withLock({ $0[tag] }),
+              ref.gate.current() == ref.epoch   // reused/released
+        else {
+            // No live ref = the audible fade WAITS for the main hop —
+            // exactly the miss the lane tally surfaces (a registry miss
+            // on some route would otherwise read as "release lags" in
+            // the hop log while the mechanism sits dead).
+            fastLaneStats.withLock { $0.releaseMisses += 1 }
+            return false
+        }
+        fastLaneStats.withLock { $0.releaseFires += 1 }
         Task.detached(priority: .userInitiated) {
             let steps = 8
             let stepSec = Self.releaseFadeSec / Double(steps)
@@ -192,6 +215,26 @@ public final class ChopPlayer {
             // No terminal here: stop + re-park stay with the main-path
             // release, which always follows in the event stream.
         }
+        return true
+    }
+
+    /// Audible-lane tallies (receive-thread fires vs main-path
+    /// fallbacks), appended to the [PadLatency] hop lines so a captured
+    /// session shows AT A GLANCE whether the fast lanes are engaged —
+    /// the hop numbers measure bookkeeping, not audio, whenever the
+    /// fire counters are moving. Lock-boxed: bumped on the receive
+    /// thread, read from the main log line.
+    private let fastLaneStats = OSAllocatedUnfairLock<
+        (pressFires: Int, pressMisses: Int,
+         releaseFires: Int, releaseMisses: Int)
+    >(initialState: (0, 0, 0, 0))
+
+    /// "press 12/0 · release 12/0" (fires/misses). Nonisolated so the
+    /// instrumentation line can read it without another hop.
+    nonisolated public var fastLaneSummary: String {
+        let s = fastLaneStats.withLock { $0 }
+        return "fastPress \(s.pressFires)/\(s.pressMisses) · "
+            + "fastRelease \(s.releaseFires)/\(s.releaseMisses)"
     }
 
     /// Test seam: the current mixer volume of the voice `tag` last
@@ -201,6 +244,390 @@ public final class ChopPlayer {
     nonisolated func fastReleaseVolume(tag: Int) -> Float? {
         fastReleaseRefs.withLock { $0[tag] }?.mixer.outputVolume
     }
+
+    // MARK: - Receive-thread fast press (D-038)
+    //
+    // The press twin of the fast release above. The parked-voice work
+    // (D-032) removed play() from the press path, but the scheduleBuffer
+    // itself still waited on the MIDI→main hop — measured 100–400 ms
+    // under same-pad hammering, because each press's own SwiftUI commit
+    // stalls the hop. Now the MAIN actor pre-arms a PLAN per pad (the
+    // exact baked loop body + effects the main trigger would derive),
+    // and the receive thread claims a parked voice and schedules the
+    // plan within a render quantum of the packet. The main-path trigger
+    // then ADOPTS the fired voice (bookkeeping only — key, takeover,
+    // playhead baseline, rotation) or supersedes a stale fire. Only
+    // INSTANT presses arm (One-Shot/Follow, no section gate): quantized
+    // Latch launches need transport state and keep main authority — the
+    // stamped clocks already make their math press-true.
+
+    /// Start phase for a fast-fired plan. `.zero` = sample top
+    /// (One-Shot); `.era` = join the current lock era's cycle phase
+    /// (Follow), computed on the receive thread from the era snapshot.
+    public enum FastPressJoin: Sendable { case zero, era }
+
+    /// Everything the receive thread needs to fire one pad, pre-derived
+    /// on main. @unchecked: the buffer is written once at bake and only
+    /// read afterwards.
+    private struct FastPressPlan: @unchecked Sendable {
+        let generation: UInt64
+        let body: AVAudioPCMBuffer
+        let effects: SamplePadEffects
+        let join: FastPressJoin
+    }
+
+    /// One pad to arm: the SAME inputs the live trigger derives its
+    /// bake from, so plan and press share cache keys and content.
+    public struct FastPressArming {
+        public let padTag: Int
+        public let assignment: PadAssignment
+        /// Downloaded loop FILE (borrowfile pads); nil = stem chop.
+        public let fileURL: URL?
+        public let effects: SamplePadEffects
+        public let crossfadeMs: Double
+        public let loopBarSeconds: Double
+        public let cycleSeconds: Double
+        public init(
+            padTag: Int, assignment: PadAssignment, fileURL: URL?,
+            effects: SamplePadEffects, crossfadeMs: Double,
+            loopBarSeconds: Double, cycleSeconds: Double
+        ) {
+            self.padTag = padTag
+            self.assignment = assignment
+            self.fileURL = fileURL
+            self.effects = effects
+            self.crossfadeMs = crossfadeMs
+            self.loopBarSeconds = loopBarSeconds
+            self.cycleSeconds = cycleSeconds
+        }
+    }
+
+    /// A parked voice as the receive thread may claim it. Ownership is
+    /// decided by `gate.advanceIfCurrent(parkEpoch)` — main claims go
+    /// through the SAME box (claimVoiceAtomically), so both sides can
+    /// never own one node. @unchecked: nodes are only scheduled/param-
+    /// set off-main, never re-wired.
+    private struct FastParkedRef: @unchecked Sendable {
+        let index: Int
+        let node: AVAudioPlayerNode
+        let delay: AVAudioUnitDelay
+        let eq: AVAudioUnitEQ
+        let mixer: AVAudioMixerNode
+        let gate: VoiceGate
+        let parkEpoch: Int
+    }
+
+    /// A fire awaiting its main-path adoption.
+    private struct FastFire: Sendable {
+        let index: Int
+        let epoch: Int
+        let generation: UInt64
+        let bodyFrames: AVAudioFrameCount
+        let phaseFrames: AVAudioFrameCount
+        let fireHostTime: UInt64
+    }
+
+    /// Era snapshot for the Follow join, pushed by the controller
+    /// whenever an anchor moves (padDown is the only mutator).
+    struct FastPressEra: Sendable {
+        var freerunAnchorHostSeconds: Double?
+        var lockAnchorSongSeconds: Double?
+        var transportRolling = false
+    }
+
+    private let fastPlanBox = OSAllocatedUnfairLock<
+        (generation: UInt64, plans: [Int: FastPressPlan])
+    >(initialState: (0, [:]))
+    private let fastParkedBox =
+        OSAllocatedUnfairLock<[FastParkedRef]>(initialState: [])
+    private let fastFireBox =
+        OSAllocatedUnfairLock<[Int: FastFire]>(initialState: [:])
+    private let fastEraBox =
+        OSAllocatedUnfairLock<FastPressEra>(initialState: .init())
+
+    /// Canonical rate as a nonisolated constant — `canonicalFormat` is
+    /// main-isolated; the receive thread only needs the number. Keep in
+    /// lockstep with `canonicalFormat`.
+    nonisolated static let canonicalSampleRate: Double = 48_000
+
+    /// mach ticks → seconds (receive-thread era math).
+    nonisolated private static let hostTickSeconds: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return Double(info.numer) / Double(info.denom) / 1_000_000_000
+    }()
+
+    /// Rebuild the plan registry for the current grid/mode/FX state.
+    /// The generation bumps FIRST (before any bake), so a press racing
+    /// the rebuild takes the main path instead of a stale plan; a newer
+    /// arm superseding this one mid-build abandons it. Bakes are cache
+    /// hits after prewarm; yields between pads keep main responsive.
+    public func armFastPresses(
+        _ items: [FastPressArming], join: FastPressJoin
+    ) async {
+        let gen = fastPlanBox.withLock { box -> UInt64 in
+            box.generation &+= 1
+            box.plans = [:]
+            return box.generation
+        }
+        var plans: [Int: FastPressPlan] = [:]
+        for item in items {
+            var body: AVAudioPCMBuffer?
+            if let url = item.fileURL {
+                // Borrow loop FILE — the trigger(file:) derivation
+                // verbatim (whole file, 12 ms crossfade) so the bake
+                // cache key matches the live press.
+                if let file = cachedFile(for: url) {
+                    let duration =
+                        Double(file.length) / file.fileFormat.sampleRate
+                    let frames = Self.regionFrameCount(
+                        startSec: 0, endSec: duration,
+                        sampleRate: file.fileFormat.sampleRate,
+                        fileLength: file.length)
+                    if frames > 0 {
+                        body = loopBuffer(
+                            file: file, startFrame: 0,
+                            frameCount: AVAudioFrameCount(frames),
+                            crossfadeMs: 12)?.buffer
+                    }
+                }
+            } else if let file = files[item.assignment.stem] {
+                // Stem chop — the trigger(_:)/schedule() derivation
+                // verbatim.
+                let chop = item.assignment.chop
+                let sr = file.fileFormat.sampleRate
+                let endSec = Self.loopRegionEndSec(
+                    chop: chop, loop: true,
+                    loopBarSeconds: item.loopBarSeconds)
+                let startFrame =
+                    AVAudioFramePosition(max(0, chop.startSec) * sr)
+                let frames = Self.regionFrameCount(
+                    startSec: chop.startSec, endSec: endSec,
+                    sampleRate: sr, fileLength: file.length)
+                if frames > 0, startFrame < file.length {
+                    let tile = chop.loopScore != nil ? item.cycleSeconds : 0
+                    body = loopBuffer(
+                        file: file, startFrame: startFrame,
+                        frameCount: AVAudioFrameCount(frames),
+                        crossfadeMs: item.crossfadeMs,
+                        tileToCycleSec: tile)?.buffer
+                }
+            }
+            guard let body else { continue }
+            plans[item.padTag] = FastPressPlan(
+                generation: gen, body: body,
+                effects: item.effects, join: join)
+            await Task.yield()
+            // Superseded mid-build — abandon, the newer arm owns the box.
+            guard fastPlanBox.withLock({ $0.generation }) == gen else { return }
+        }
+        let built = plans
+        fastPlanBox.withLock { box in
+            guard box.generation == gen else { return }
+            box.plans = built
+        }
+    }
+
+    /// Invalidate every plan NOW (grid remount, mode change, section
+    /// gate armed, reattach). Synchronous + cheap: one generation bump
+    /// under the lock — any in-flight or later fast press sees a stale
+    /// generation and falls to the main path.
+    public func disarmFastPresses() {
+        fastPlanBox.withLock { box in
+            box.generation &+= 1
+            box.plans = [:]
+        }
+    }
+
+    /// Era snapshot for the Follow join (nonisolated: the controller
+    /// pushes it from padDown; the receive thread reads it).
+    nonisolated public func updateFastPressEra(
+        freerunAnchorHostSeconds: Double?,
+        lockAnchorSongSeconds: Double?,
+        transportRolling: Bool
+    ) {
+        fastEraBox.withLock {
+            $0 = FastPressEra(
+                freerunAnchorHostSeconds: freerunAnchorHostSeconds,
+                lockAnchorSongSeconds: lockAnchorSongSeconds,
+                transportRolling: transportRolling)
+        }
+    }
+
+    /// RECEIVE-THREAD PRESS: fire `tag`'s armed plan on a parked voice
+    /// within a render quantum of the packet — no main actor anywhere.
+    /// Returns false (and does nothing) when no current plan exists or
+    /// the parked pool is empty; the main-path press then plays
+    /// normally. On success the fast-release ref is registered
+    /// immediately (a pad-up can beat the press's main hop) and a
+    /// FastFire is left for the main trigger to adopt.
+    ///
+    /// Deliberately dropped on this lane: the bake's `shiftSec` launch
+    /// compensation (sub-50 ms grid alignment for QUANTIZED launches —
+    /// instant gates fire now by definition) and per-press velocity
+    /// (grid pads are gates on every surface).
+    @discardableResult
+    nonisolated public func padPressed(
+        tag: Int, songSeconds: Double, hostTime: UInt64
+    ) -> Bool {
+        let (gen, plan) = fastPlanBox.withLock {
+            ($0.generation, $0.plans[tag])
+        }
+        guard let plan, plan.generation == gen else {
+            fastLaneStats.withLock { $0.pressMisses += 1 }
+            return false
+        }
+        while let ref = fastParkedBox.withLock({ $0.popLast() }) {
+            // Atomic ownership: stale refs (voice re-claimed since it
+            // parked) fail the compare-and-advance and are discarded.
+            guard let epoch = ref.gate.advanceIfCurrent(ref.parkEpoch)
+            else { continue }
+            Self.applyEffects(plan.effects, delay: ref.delay, eq: ref.eq)
+            ref.mixer.outputVolume = 1
+            ref.mixer.pan = 0
+            var phase: AVAudioFrameCount = 0
+            if case .era = plan.join {
+                let era = fastEraBox.withLock { $0 }
+                let offset: Double
+                if era.transportRolling,
+                   let anchor = era.lockAnchorSongSeconds {
+                    offset = songSeconds - anchor
+                } else if let anchor = era.freerunAnchorHostSeconds {
+                    offset = Double(hostTime) * Self.hostTickSeconds - anchor
+                } else {
+                    offset = 0
+                }
+                phase = AVAudioFrameCount(Self.phaseLockFrames(
+                    offsetSeconds: offset,
+                    bodyFrames: Int64(plan.body.frameLength),
+                    sampleRate: Self.canonicalSampleRate))
+            }
+            if phase > 0,
+               let head = Self.tailSegment(of: plan.body, from: phase) {
+                ref.node.scheduleBuffer(
+                    head, at: nil, options: [], completionHandler: nil)
+            }
+            // Parked node: the queued body begins at the next render
+            // cycle on its own — no control call, same as the main lane.
+            ref.node.scheduleBuffer(
+                plan.body, at: nil, options: [.loops],
+                completionHandler: nil)
+            fastReleaseRefs.withLock {
+                $0[tag] = FastReleaseRef(
+                    mixer: ref.mixer, gate: ref.gate, epoch: epoch)
+            }
+            let firedPhase = phase
+            fastFireBox.withLock {
+                $0[tag] = FastFire(
+                    index: ref.index, epoch: epoch, generation: gen,
+                    bodyFrames: plan.body.frameLength,
+                    phaseFrames: firedPhase,
+                    fireHostTime: hostTime)
+            }
+            fastLaneStats.withLock { $0.pressFires += 1 }
+            return true
+        }
+        fastLaneStats.withLock { $0.pressMisses += 1 }   // pool empty
+        return false
+    }
+
+    // Test seams (nonisolated: assertable while main is blocked).
+    nonisolated func hasFastPlan(tag: Int) -> Bool {
+        fastPlanBox.withLock { $0.plans[tag]?.generation == $0.generation }
+    }
+    /// Test seam: the join phase the voice sounding this chop carries
+    /// (fast-fire adoption must preserve it for the playhead ring).
+    func voicePhaseFrames(stem: String, idx: Int) -> AVAudioFrameCount? {
+        voices.first { $0.key == .chop(stem: stem, idx: idx) }?.phaseFrames
+    }
+    nonisolated var fastParkedCount: Int {
+        fastParkedBox.withLock { $0.count }
+    }
+    nonisolated var pendingFastFireCount: Int {
+        fastFireBox.withLock { $0.count }
+    }
+
+    /// Push a freshly PARKED voice into the shared claim pool. Every
+    /// parking site calls this (warmUpPool, fade terminal, natural
+    /// one-shot end) — a parked voice not in the box would be claimable
+    /// by neither lane's pop and strand.
+    private func pushFastParked(_ index: Int) {
+        let v = voices[index]
+        fastParkedBox.withLock {
+            $0.append(FastParkedRef(
+                index: index, node: v.node, delay: v.delay, eq: v.eq,
+                mixer: v.mixer, gate: v.gate,
+                parkEpoch: v.gate.current()))
+        }
+    }
+
+    /// Main-path adoption of a receive-thread fire: bookkeeping ONLY —
+    /// the audio is already sounding. Never advances the gate (the
+    /// fire's fast-release ref must stay live until release).
+    private func adoptFastFire(_ fire: FastFire, key: VoiceKey) {
+        let index = fire.index
+        let prior = voices.firstIndex { $0.key == key }
+        voices[index].pendingPlay?.cancel()
+        voices[index].pendingPlay = nil
+        voices[index].fadeTask?.cancel()
+        voices[index].fadeTask = nil
+        voices[index].gen &+= 1
+        voices[index].key = key
+        voices[index].parked = false
+        voices[index].loopFrames = fire.bodyFrames
+        voices[index].phaseFrames = fire.phaseFrames
+        // Playhead baseline: the body started at the FIRE, not at this
+        // (possibly much later) hop — subtract the elapsed frames so
+        // loopProgress tracks what is audible.
+        if let rt = voices[index].node.lastRenderTime,
+           let pt = voices[index].node.playerTime(forNodeTime: rt) {
+            let elapsed = Double(mach_absolute_time() &- fire.fireHostTime)
+                * Self.hostTickSeconds
+            voices[index].startSampleTime = max(0, pt.sampleTime
+                - Int64((elapsed * Self.canonicalSampleRate).rounded()))
+        } else {
+            voices[index].startSampleTime = 0
+        }
+        let stem: String? = {
+            if case .chop(let s, _) = key { return s }
+            return nil
+        }()
+        if voices[index].takeoverStem != stem { endTakeover(index) }
+        if let s = stem, voices[index].takeoverStem != s {
+            beginTakeover(index, stem: s)
+        }
+        // Rotation, exactly like a main-lane retrigger: the superseded
+        // prior voice fades off the press path.
+        if let prior, prior != index, voices[prior].key == key {
+            fadeOutAndStop(prior)
+        }
+    }
+
+    /// Kill a fire whose adoption failed (plan generation moved, grid
+    /// remounted): stop the node iff the fire still owns it. Left
+    /// un-parked — the next warm-up or claim recovers the slot.
+    private func abortFastFire(_ fire: FastFire) {
+        guard voices.indices.contains(fire.index),
+              fire.epoch == voices[fire.index].gate.current(),
+              voices[fire.index].gate.advanceIfCurrent(fire.epoch) != nil
+        else { return }
+        voices[fire.index].node.stop()
+        voices[fire.index].parked = false
+        voices[fire.index].key = nil
+        voices[fire.index].loopFrames = nil
+    }
+
+    /// Abort every un-adopted fire (grid swap / stopAll): their content
+    /// is about to be wrong, and no main trigger will come for them.
+    private func abortAllFastFires() {
+        let fires = fastFireBox.withLock { box -> [FastFire] in
+            let all = Array(box.values)
+            box.removeAll()
+            return all
+        }
+        for fire in fires { abortFastFire(fire) }
+    }
+
     private var files: [String: AVAudioFile] = [:]
     /// Readers for sequencer customURL sources, cached per URL.
     private var fileCache: [URL: AVAudioFile] = [:]
@@ -302,6 +729,10 @@ public final class ChopPlayer {
         regionCache.removeAll()
         loopCache.removeAll()
         fastReleaseRefs.withLock { $0.removeAll() }
+        // Plans bake against the OLD session's readers — dead now. The
+        // session re-arms after the new grid mounts. (Parked refs stay:
+        // the voices themselves are untouched by a stem swap.)
+        disarmFastPresses()
     }
 
     /// 44-bin peak envelope for a pad's chop — the grid tiles draw
@@ -594,6 +1025,24 @@ public final class ChopPlayer {
             print("[ChopPlayer] dropped trigger: engine not running")
             return
         }
+        // FAST-PRESS ADOPTION (D-038): the receive thread may already
+        // have fired this pad's plan on a parked voice within a render
+        // quantum of the packet. This main trigger then only does the
+        // bookkeeping the fast lane couldn't — never a second schedule.
+        // A stale fire (plan generation moved: the grid/mode changed
+        // between fire and hop, so THIS trigger's content differs from
+        // what fired) is killed and the press replays normally.
+        if let padTag,
+           let fire = fastFireBox.withLock({ $0.removeValue(forKey: padTag) }) {
+            if loop,
+               fire.generation == fastPlanBox.withLock({ $0.generation }),
+               voices.indices.contains(fire.index),
+               voices[fire.index].gate.current() == fire.epoch {
+                adoptFastFire(fire, key: key)
+                return
+            }
+            abortFastFire(fire)
+        }
         let sampleRate = file.fileFormat.sampleRate
         let startFrame = AVAudioFramePosition(max(0, startSec) * sampleRate)
         let frameCount = Self.regionFrameCount(
@@ -667,7 +1116,7 @@ public final class ChopPlayer {
         // pileups on hardware.
         let prior = voices.firstIndex { $0.key == key }
 
-        let index = claimVoice(for: key)
+        let (index, fastEpoch) = claimVoiceAtomically(for: key)
         // Stem this trigger takes over (bundle chops only; file voices don't
         // duck the song). End the claimed slot's PRIOR takeover first — unless
         // it's the same stem (a same-stem retrigger keeps the duck, no blip).
@@ -675,15 +1124,15 @@ public final class ChopPlayer {
         if voices[index].takeoverStem != takeoverStem { endTakeover(index) }
         // Kill the slot's prior async state BEFORE reuse: a still-armed
         // start must not fire under the new voice, and an in-flight
-        // release fade must not touch it — the epoch advance is the
-        // atomic half of that promise (VoiceGate): a detached fade
-        // between its cancel check and its terminal can no longer stop
-        // or re-volume this slot.
+        // release fade must not touch it — the epoch advance (done
+        // ATOMICALLY inside the claim, so the receive-thread fast press
+        // can never own the same node) is the atomic half of that
+        // promise (VoiceGate): a detached fade between its cancel check
+        // and its terminal can no longer stop or re-volume this slot.
         voices[index].pendingPlay?.cancel()
         voices[index].pendingPlay = nil
         voices[index].fadeTask?.cancel()
         voices[index].fadeTask = nil
-        let fastEpoch = voices[index].gate.advance()
 
         var voice = voices[index]
         voice.gen &+= 1
@@ -802,7 +1251,9 @@ public final class ChopPlayer {
                     // the slot goes straight back into the zero-cost
                     // claim pool. An early completion from a stop()
                     // reports !isPlaying and stays un-parked.
-                    self.voices[index].parked = self.voices[index].node.isPlaying
+                    let parked = self.voices[index].node.isPlaying
+                    self.voices[index].parked = parked
+                    if parked { self.pushFastParked(index) }
                 }
             }
         }
@@ -871,7 +1322,7 @@ public final class ChopPlayer {
     /// Copy of `src` from `startFrame` to its end — the first (partial)
     /// pass of a phase-locked join. Nil when the slice is empty/degenerate
     /// (caller falls back to a phase-0 start).
-    private static func tailSegment(
+    nonisolated private static func tailSegment(
         of src: AVAudioPCMBuffer, from startFrame: AVAudioFrameCount
     ) -> AVAudioPCMBuffer? {
         let total = src.frameLength
@@ -1096,6 +1547,10 @@ public final class ChopPlayer {
     }
 
     public func stopAll() {
+        // Un-adopted receive-thread fires are sounding with a nil key —
+        // the keyed sweep below can't see them, and after a grid swap no
+        // main trigger will ever come to adopt them. Kill them first.
+        abortAllFastFires()
         for index in voices.indices where voices[index].key != nil {
             fadeOutAndStop(index)
         }
@@ -1186,6 +1641,9 @@ public final class ChopPlayer {
                       player.voices[index].gen == gen else { return }
                 player.voices[index].fadeTask = nil
                 player.voices[index].parked = didPark
+                // Back into the shared claim pool (fast press + main
+                // claims both pop it) the moment the flag lands.
+                if didPark { player.pushFastParked(index) }
             }
         }
     }
@@ -1220,6 +1678,12 @@ public final class ChopPlayer {
     /// drop.
     public func reattach() {
         fastReleaseRefs.withLock { $0.removeAll() }
+        // The whole fast-press surface is stale with the graph: plans
+        // (bodies still valid but the session will re-arm), parked refs
+        // (every node stops below) and fires (no node to adopt).
+        disarmFastPresses()
+        fastParkedBox.withLock { $0.removeAll() }
+        fastFireBox.withLock { $0.removeAll() }
         for index in voices.indices {
             endTakeover(index)
             // Hard stop, no fade: reattach fires while the graph is
@@ -1297,11 +1761,19 @@ public final class ChopPlayer {
     /// to save an audibly-neutral biquad; the delay is NOT bypassed at
     /// mix=0 because wetDryMix=0 renders bit-identical to dry.
     private func applyEffects(_ fx: SamplePadEffects, to voice: Voice) {
-        voice.delay.delayTime = fx.delayTimeSec
-        voice.delay.feedback = Float(fx.delayFeedback)
-        voice.delay.wetDryMix = Float(fx.delayMix)
+        Self.applyEffects(fx, delay: voice.delay, eq: voice.eq)
+    }
 
-        let band = voice.eq.bands[0]
+    /// AU parameter sets only — thread-safe, so the receive-thread fast
+    /// press (D-038) applies its plan's effects through the same code.
+    nonisolated private static func applyEffects(
+        _ fx: SamplePadEffects, delay: AVAudioUnitDelay, eq: AVAudioUnitEQ
+    ) {
+        delay.delayTime = fx.delayTimeSec
+        delay.feedback = Float(fx.delayFeedback)
+        delay.wetDryMix = Float(fx.delayMix)
+
+        let band = eq.bands[0]
         band.frequency = Float(fx.filterCutoffHz)
         band.bandwidth = Float(fx.filterResonanceDb)
         band.bypass = fx.filterCutoffHz >= 19_999
@@ -1315,18 +1787,46 @@ public final class ChopPlayer {
     /// ROTATE (schedule() fades the prior voice off the press path) —
     /// and the old idle scan examined only the FIRST nil-key slot, so
     /// a still-fading voice there grew the pool on every rapid press.
-    private func claimVoice(for key: VoiceKey) -> Int {
-        if let parked = voices.firstIndex(where: { $0.key == nil && $0.parked }) {
-            return parked
+    ///
+    /// D-038 makes the claim ATOMIC vs the receive-thread fast press:
+    /// parked voices are claimed by popping the SAME lock-boxed pool
+    /// the fast lane pops, with ownership decided by the voice gate's
+    /// compare-and-advance — so both lanes can never schedule onto one
+    /// node (the old flow advanced the epoch a few statements AFTER
+    /// picking the slot, a window where a concurrent fast fire would
+    /// queue its looping body under the main press's buffer). Voices
+    /// holding an un-adopted fire are skipped everywhere: their key is
+    /// still nil on main, but their node is already sounding the fire.
+    /// Returns the slot AND the claim's fresh epoch.
+    private func claimVoiceAtomically(for key: VoiceKey) -> (index: Int, epoch: Int) {
+        let reserved = fastFireBox.withLock { Set($0.values.map(\.index)) }
+        // 1) Parked pool, shared with the fast press. Stale refs (voice
+        //    re-claimed since parking) fail the compare-and-advance.
+        while let ref = fastParkedBox.withLock({ $0.popLast() }) {
+            guard !reserved.contains(ref.index),
+                  voices.indices.contains(ref.index),
+                  voices[ref.index].key == nil,
+                  let epoch = ref.gate.advanceIfCurrent(ref.parkEpoch)
+            else { continue }
+            return (ref.index, epoch)
+        }
+        // 2) Parked flag without a pool ref (should not happen — every
+        //    parking site pushes — but a stray flag must not strand the
+        //    voice forever; the advance kills any stale fast ref).
+        if let i = voices.firstIndex(where: {
+            $0.key == nil && $0.parked
+        }), !reserved.contains(i) {
+            return (i, voices[i].gate.advance())
         }
         if let idle = voices.firstIndex(where: {
             $0.key == nil && !$0.node.isPlaying
-        }) {
-            return idle
+        }), !reserved.contains(idle) {
+            return (idle, voices[idle].gate.advance())
         }
         if voices.count < Self.poolSize {
             voices.append(makeVoice())
-            return voices.count - 1
+            let i = voices.count - 1
+            return (i, voices[i].gate.advance())
         }
         // Pool full: steal — but NEVER a ringing loop if a one-shot voice
         // exists. Round-robin used to grab loop voices freely, so tapping
@@ -1334,16 +1834,22 @@ public final class ChopPlayer {
         // Loops are only stolen when the whole pool is loops.
         for probe in 0..<voices.count {
             let i = (nextVoice + probe) % voices.count
-            if voices[i].loopFrames == nil {
+            if voices[i].loopFrames == nil, !reserved.contains(i) {
                 nextVoice = i + 1
                 endTakeover(i)
-                return i
+                return (i, voices[i].gate.advance())
             }
         }
-        let index = nextVoice % voices.count
-        nextVoice += 1
+        var index = nextVoice % voices.count
+        // Never steal an un-adopted fire even at saturation — probe past.
+        for probe in 0..<voices.count
+        where !reserved.contains((nextVoice + probe) % voices.count) {
+            index = (nextVoice + probe) % voices.count
+            break
+        }
+        nextVoice = index + 1
         endTakeover(index)
-        return index
+        return (index, voices[index].gate.advance())
     }
 
     /// One voice chain, attached but unwired/unparked. Neutral chain so
@@ -1416,6 +1922,7 @@ public final class ChopPlayer {
                   voices[item.index].key == nil,
                   voices[item.index].node.isPlaying else { continue }
             voices[item.index].parked = true
+            pushFastParked(item.index)
         }
     }
 

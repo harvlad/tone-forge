@@ -335,6 +335,7 @@ public final class LaunchpadController {
         didSet {
             guard playbackMode != oldValue else { return }
             onSurfaceSettingChanged?()
+            onFastPressStateChanged?()   // instant-press plans depend on mode
         }
     }
 
@@ -351,6 +352,7 @@ public final class LaunchpadController {
         didSet {
             guard sectionGate != oldValue else { return }
             onSurfaceSettingChanged?()
+            onFastPressStateChanged?()   // gated surfaces never fast-fire
         }
     }
 
@@ -358,6 +360,29 @@ public final class LaunchpadController {
     /// (padCount / playbackMode / sectionGate) — the Projects
     /// auto-save hook.
     @ObservationIgnored public var onSurfaceSettingChanged: (() -> Void)?
+
+    /// D-038 fast-press seam: fired whenever the INSTANT-press surface
+    /// state changes — grid content (every mount/re-lay funnels through
+    /// `repaint()`), playback mode, or section gate — so the host can
+    /// re-arm (or disarm) the receive-thread press plans. The host
+    /// disarms SYNCHRONOUSLY inside this hook: a press between the
+    /// change and the async re-arm must take the main path, never a
+    /// stale plan.
+    @ObservationIgnored public var onFastPressStateChanged: (() -> Void)?
+
+    /// D-038: era-anchor snapshot for the receive-thread Follow join,
+    /// pushed after every padDown/replayArm (the only anchor mutators)
+    /// with (freerunAnchorHostSeconds, lockAnchorSongSeconds,
+    /// transportRolling).
+    @ObservationIgnored public var onEraChanged: ((Double?, Double?, Bool) -> Void)?
+
+    /// Emit the current era snapshot (see `onEraChanged`).
+    private func publishEra() {
+        onEraChanged?(
+            freerunAnchorHostSeconds,
+            lockAnchorSongSeconds,
+            isTransportPlaying?() ?? false)
+    }
     /// Loop lock: when on, a triggered loop snaps to the next BAR of the
     /// shared lock lattice and the wait stays ≤ 1 bar. Off = the loop
     /// starts per the user's Quantize control (instant at `.off`).
@@ -1193,7 +1218,10 @@ public final class LaunchpadController {
         }
         transport?.setLight(.pulse(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
         onTrigger?(pad, assignment, fireAt, lockPhaseSeconds)
-        logPadLatency("press→trigger", pressHostTime: pressHostTime)
+        logPadLatency("press→mainTrigger", pressHostTime: pressHostTime)
+        // The branches above may have (re)anchored an era — keep the
+        // receive-thread fast press's join snapshot current (D-038).
+        publishEra()
     }
 
     // MARK: - Pad latency instrumentation (debug flag)
@@ -1221,12 +1249,28 @@ public final class LaunchpadController {
         return enabled
     }()
 
+    /// Audible-lane probe for the latency lines (D-038): the host
+    /// supplies the fast-press/fast-release fire tallies so a captured
+    /// hop line reads as what it IS — the MAIN-HOP (bookkeeping/LED/
+    /// recording) cost, with the audible start/fade already handled on
+    /// the MIDI thread whenever the fire counters are moving. Before
+    /// this, "padUp→release 194 ms" read as an audio regression while
+    /// the fade had begun ~a render quantum after the packet.
+    @ObservationIgnored public var latencyLaneProbe: (() -> String)?
+
+    /// Both lines measure the MIDI-receive-stamp → MAIN-HOP delta, by
+    /// design (the hop is what they exist to expose). The audible lanes
+    /// are pre-hop: fast press (armed plans, D-038) and fast release
+    /// (D-033) run on the receive thread; the bracketed tally says
+    /// whether they fired. All printing stays on MAIN — instrumentation
+    /// must never become receive-thread work.
     private func logPadLatency(_ label: String, pressHostTime: UInt64?) {
         guard Self.latencyLogEnabled, let pressHostTime, pressHostTime > 0
         else { return }
         let deltaMs = (hostNowSeconds()
             - Double(pressHostTime) * Self.hostTickSeconds) * 1000
-        print(String(format: "[PadLatency] %@ %.2f ms", label, deltaMs))
+        let lane = latencyLaneProbe.map { " [\($0())]" } ?? ""
+        print(String(format: "[PadLatency] %@ %.2f ms%@", label, deltaMs, lane))
     }
 
     // MARK: - Arrangement replay (hands-free)
@@ -1270,6 +1314,7 @@ public final class LaunchpadController {
         activePads.insert(pad)
         transport?.setLight(.pulse(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
         onTrigger?(pad, assignment, fireAt, lockPhaseSeconds)
+        publishEra()   // replay can seed the era too (D-038)
     }
 
     /// Release an arrangement-replay pad (kit.js `releasePadForReplay`).
@@ -1314,7 +1359,7 @@ public final class LaunchpadController {
             activePads.remove(pad)
             onRelease?(pad, assignment)   // stop the momentary/gate voice NOW
             transport?.setLight(.solid(colorHint: displayColorHint(for: assignment, at: pad)), at: pad)
-            logPadLatency("padUp→release", pressHostTime: pressHostTime)
+            logPadLatency("padUp→mainRelease", pressHostTime: pressHostTime)
         }
     }
 
@@ -1447,5 +1492,8 @@ public final class LaunchpadController {
             }
         }
         transport.setLights(frame)
+        // Every grid mutation funnels here (mounts, re-lays, edits,
+        // attach) — the fast-press plans must follow the surface.
+        onFastPressStateChanged?()
     }
 }

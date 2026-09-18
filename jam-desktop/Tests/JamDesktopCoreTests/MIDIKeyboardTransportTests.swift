@@ -335,6 +335,54 @@ final class MIDIKeyboardTransportTests: XCTestCase {
         XCTAssertTrue(learned.isEmpty)
     }
 
+    // MARK: - Receive-thread fast pad tap (D-038)
+
+    /// MIDI-Learn pads ride the same fast press/release engine as the
+    /// Launchpad hardware: routed pad notes tap ON the receive thread
+    /// (no queue drain — anything visible here happened pre-hop) with
+    /// the receive-thread clocks; unrouted notes (synth mode, unmapped)
+    /// never tap. The mapping is the SAME pure `padCell` the stamped
+    /// main lane uses, so both lanes always name one grid cell.
+    func testFastPadTapFiresPreHopForRoutedPadsOnly() {
+        final class TapBox: @unchecked Sendable {
+            var taps: [(pad: LaunchpadPad, down: Bool, song: Double, host: UInt64)] = []
+        }
+        let t = makeTransport()
+        let box = TapBox()
+        t.setFastPadTap { pad, down, song, host in
+            box.taps.append((pad, down, song, host))
+        }
+        plugInKeyboard()
+
+        // Synth routing: notes are synth notes, never pad taps.
+        midi.receive([.noteOn(channel: 0, note: 60, velocity: 100)],
+                     from: Self.keyboard)
+        XCTAssertTrue(box.taps.isEmpty, "synth routing never taps")
+
+        // Learned map: note 60 → pad idx 0 → grid cell (0,0); note 61
+        // is unmapped and must be dropped (MIDI-Learn doctrine).
+        t.noteRouting = .mappedPads(map: [60: 0])
+        midi.receive([
+            .noteOn(channel: 0, note: 60, velocity: 100),   // press
+            .noteOn(channel: 0, note: 61, velocity: 100),   // unmapped
+            .noteOn(channel: 0, note: 60, velocity: 0),     // vel-0 release
+        ], hostTime: 321, from: Self.keyboard)
+
+        XCTAssertEqual(box.taps.count, 2, "mapped notes only")
+        XCTAssertEqual(box.taps[0].pad, LaunchpadPad(row: 0, col: 0))
+        XCTAssertTrue(box.taps[0].down)
+        XCTAssertEqual(box.taps[0].song, 12.0)   // receive-thread stamp
+        XCTAssertEqual(box.taps[0].host, 321)    // packet host stamp
+        XCTAssertEqual(box.taps[1].pad, LaunchpadPad(row: 0, col: 0))
+        XCTAssertFalse(box.taps[1].down)
+
+        // The stamped main lane names the SAME cell (shared padCell).
+        drainMainQueue()
+        XCTAssertTrue(events.contains {
+            $0.kind == .padDown(row: 8, col: 1)
+        }, "main lane and fast lane agree on the grid cell")
+    }
+
     // MARK: - Control Change
 
     func testControlChangeSurfacedNotRoutedToAudio() {

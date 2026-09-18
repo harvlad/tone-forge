@@ -21,6 +21,7 @@
 // retrigger, and the fade terminal re-parking drained voices.
 
 import AVFoundation
+import os
 import XCTest
 import ToneForgeEngine
 import JamDesktopCore
@@ -380,6 +381,180 @@ final class ChopPlayerBurstTests: XCTestCase {
         XCTAssertNotNil(player.fastReleaseVolume(tag: 5))
         XCTAssertEqual(player.immediatePlayCount, 0)
         player.release(fileURL: fileURL)
+    }
+
+    // MARK: - Receive-thread fast press (D-038)
+
+    private func armOne(
+        _ player: ChopPlayer, tag: Int,
+        join: ChopPlayer.FastPressJoin = .zero
+    ) async -> PadAssignment {
+        let a = PadAssignment(chop: chop, stem: "other")
+        await player.armFastPresses([
+            .init(padTag: tag, assignment: a, fileURL: nil,
+                  effects: .neutral,
+                  crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                  loopBarSeconds: 2.0, cycleSeconds: 4.0),
+        ], join: join)
+        return a
+    }
+
+    /// The audible press must not wait for the MIDI→main hop: real
+    /// hardware capture (2026-09-18, 188 events) measured press hops of
+    /// 15–44 ms typical with 81/138 ms spikes under same-pad hammering —
+    /// SwiftUI repaint storms queue the hop at finger rates. Here the
+    /// main actor is deliberately blocked for ~6× the render quantum
+    /// while the receive thread fires the armed plan: the parked-voice
+    /// schedule AND the fast-release registration must complete without
+    /// main. The blocked-main mirror of the D-033 fast-release test.
+    func testFastPressFiresWhileMainActorIsBlocked() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        await player.prewarm([(chop: chop, stem: "other")],
+                             loopBarSeconds: 2.0, cycleSeconds: 4.0)
+        await player.warmUpPool()
+        let tag = 9
+        let a = await armOne(player, tag: tag)
+        XCTAssertTrue(player.hasFastPlan(tag: tag))
+
+        let fired = OSAllocatedUnfairLock(initialState: false)
+        Thread.detachNewThread {
+            let ok = player.padPressed(
+                tag: tag, songSeconds: 0, hostTime: mach_absolute_time())
+            fired.withLock { $0 = ok }
+        }
+        usleep(60_000)   // main actor stalled the whole time
+
+        XCTAssertTrue(fired.withLock { $0 },
+                      "the press must fire on the receive thread")
+        XCTAssertNotNil(player.fastReleaseVolume(tag: tag),
+            "the fire registers its fast-release ref pre-hop — a pad-up "
+            + "can beat the press's own main hop")
+        XCTAssertEqual(player.pendingFastFireCount, 1)
+
+        // The trailing main hop ADOPTS: bookkeeping only, exactly one
+        // keyed voice, no second schedule, no play() anywhere.
+        player.trigger(a, afterSeconds: 0, loop: true,
+                       crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                       loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+        XCTAssertEqual(player.soundingVoiceCount, 1,
+                       "adoption, never a double-trigger")
+        XCTAssertEqual(player.pendingFastFireCount, 0)
+        XCTAssertEqual(player.immediatePlayCount, 0)
+        player.padReleased(tag: tag)
+        player.release(a)
+    }
+
+    /// Armed-plan invalidation: a remount/mode change bumps the plan
+    /// generation SYNCHRONOUSLY, so a press with the old surface's plan
+    /// can never sound stale content — pre-fire (padPressed refuses)
+    /// AND post-fire (the main trigger refuses adoption and replays the
+    /// press against the new grid, killing the fast voice).
+    func testStalePlanNeverFiresAndStaleFireIsSuperseded() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        await player.warmUpPool()
+        let tag = 4
+
+        // Pre-fire: disarm (what every grid remount does first) → the
+        // press falls to the main path, claiming nothing.
+        _ = await armOne(player, tag: tag)
+        player.disarmFastPresses()
+        let parked = player.fastParkedCount
+        XCTAssertFalse(player.padPressed(
+            tag: tag, songSeconds: 0, hostTime: mach_absolute_time()))
+        XCTAssertNil(player.fastReleaseVolume(tag: tag))
+        XCTAssertEqual(player.fastParkedCount, parked,
+                       "a dead plan must not claim a parked voice")
+
+        // Post-fire: fire, THEN remount (generation bump) before the
+        // main hop lands — adoption must refuse and the normal press
+        // must supersede the fast voice.
+        let a = await armOne(player, tag: tag)
+        XCTAssertTrue(player.padPressed(
+            tag: tag, songSeconds: 0, hostTime: mach_absolute_time()))
+        player.disarmFastPresses()   // the remount's synchronous half
+        player.trigger(a, afterSeconds: 0, loop: true,
+                       crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                       loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+        XCTAssertEqual(player.soundingVoiceCount, 1,
+            "exactly the fresh voice sounds; the stale fire was aborted")
+        XCTAssertEqual(player.pendingFastFireCount, 0)
+        player.release(a)
+    }
+
+    /// The receive-thread entry must stay ~free (it runs on the MIDI
+    /// thread): burst across 12 armed pads, every padPressed call
+    /// bounded well under one render quantum (~10.7 ms at 512f/48k).
+    func testFastPressReceiveThreadCostBoundedUnderBurst() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        await player.prewarm([(chop: chop, stem: "other")],
+                             loopBarSeconds: 2.0, cycleSeconds: 4.0)
+        await player.warmUpPool()
+        let items = (0..<12).map { tag in
+            ChopPlayer.FastPressArming(
+                padTag: tag,
+                assignment: PadAssignment(chop: chop, stem: "other"),
+                fileURL: nil, effects: .neutral,
+                crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                loopBarSeconds: 2.0, cycleSeconds: 4.0)
+        }
+        await player.armFastPresses(items, join: .zero)
+
+        var worst = 0.0
+        var total = 0.0
+        for tag in 0..<12 {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let ok = player.padPressed(
+                tag: tag, songSeconds: 0, hostTime: mach_absolute_time())
+            let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            XCTAssertTrue(ok, "pad \(tag) must fire (12 < 16 parked)")
+            worst = max(worst, dt)
+            total += dt
+        }
+        print(String(format:
+            "[FastPress] receive-thread cost mean %.3f ms worst %.3f ms",
+            total / 12, worst))
+        XCTAssertLessThan(worst, 5.0,
+            "fast press must stay well under a render quantum")
+        player.stopAll()   // aborts the un-adopted fires
+        XCTAssertEqual(player.pendingFastFireCount, 0)
+    }
+
+    /// Follow join on the receive thread: with a free-run era anchored,
+    /// the fired voice starts mid-body at the era phase (not at zero) —
+    /// the same join the main path computes.
+    func testFastPressEraJoinStartsMidBody() async throws {
+        let (engine, player, url) = try makePlayer()
+        defer { engine.stop(); try? FileManager.default.removeItem(at: url) }
+        await player.load(stemURLs: ["other": url])
+        await player.warmUpPool()
+        let tag = 6
+        _ = await armOne(player, tag: tag, join: .era)
+        // Free-run era anchored 1.0 s ago (host clock domain).
+        let nowTicks = mach_absolute_time()
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        let tick = Double(info.numer) / Double(info.denom) / 1_000_000_000
+        player.updateFastPressEra(
+            freerunAnchorHostSeconds: Double(nowTicks) * tick - 1.0,
+            lockAnchorSongSeconds: nil, transportRolling: false)
+        XCTAssertTrue(player.padPressed(
+            tag: tag, songSeconds: 0, hostTime: nowTicks))
+        // 1.0 s into a 4 s body @48k = phase 48000 — visible via the
+        // adopted voice's phaseFrames → loopProgress baseline. Adoption:
+        let a = PadAssignment(chop: chop, stem: "other")
+        player.trigger(a, afterSeconds: 0, loop: true,
+                       crossfadeMs: ChopPlayer.defaultPadCrossfadeMs,
+                       loopBarSeconds: 2.0, cycleSeconds: 4.0, padTag: tag)
+        XCTAssertEqual(player.soundingVoiceCount, 1)
+        // The join phase survives into main bookkeeping (playhead ring).
+        XCTAssertEqual(player.voicePhaseFrames(stem: "other", idx: 0), 48_000)
+        player.release(a)
     }
 
     func testFadeTerminalReparksDrainedVoices() async throws {
