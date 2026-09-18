@@ -5225,3 +5225,12 @@ body:has(#view-intake.active) #view-intake.active { width: 100%; }
   pointer-events: none;
   overflow: hidden;
 }
+
+/* Surface swap must actually swap: kit.js stamps .kit-surface (display:
+   flex) directly onto #kit-root, and ANY author display rule beats the
+   UA's [hidden] { display: none } — the same trap documented above for
+   .stage-col. Without these, picking the Notes/Chords tab stacked the
+   full kit under the note grid instead of replacing it. */
+#kit-root[hidden],
+#remix-root[hidden],
+.pad-notes-surface[hidden] { display: none !important; }

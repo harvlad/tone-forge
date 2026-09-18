@@ -88,6 +88,12 @@
   const ROOT_RGB = [127, 100, 0];       // bright root highlight
   const CHORD_TONE_RGB = [0, 110, 110];  // teal boost when a chord is sounding
   const CHROMATIC_DIM_RGB = [4, 4, 4];  // barely-lit out-of-key
+  // Uniform "in the song's key" tint for the INSTRUMENT note grids.
+  // One clear color (not the per-degree DEGREE_RGB rainbow, which at
+  // 0.4 brightness read as unrelated faint washes next to a one-chip
+  // 'Scale' legend): the legend chip and every in-key pad share this
+  // constant BY CONSTRUCTION, on hardware and on the screen mirror.
+  const SCALE_RGB = [24, 64, 127];      // clear blue: note is in key
 
   // Reverse table for the palette IDs used with LED_PULSE, so the
   // on-screen mirror can render pulse pads with a reasonable RGB
@@ -1254,6 +1260,31 @@
     return _chordPitchClasses(sym);
   }
 
+  // Pure per-pad paint decision for the instrument note grids — the
+  // note → scale-membership → color mapping the Notes surface, the
+  // hardware LEDs and the screen mirror all share. Rules (legend order):
+  //   * key root         → ROOT_RGB, always — transport stopped or not
+  //     ("where is home" must not depend on a chord sounding).
+  //   * current-chord tone (non-root) → CHORD_TONE_RGB teal boost.
+  //   * any other in-key note → SCALE_RGB, one clear uniform tint.
+  //   * out-of-key → dark (or barely-lit chromatic per _outOfKeyMode).
+  // Every kind is 'static': 'active' is the "single sounding pad"
+  // treatment (song-verify chord NOW / melody NOW) and the screen styles
+  // it with a pressed-looking glow ring + dims everything else — root
+  // pads painted 'active' here read as stuck presses. Exported via
+  // _internals for node tests (launchpad.test.mjs).
+  function _instrumentPadColor(pc, key, highlightPCs, outOfKeyMode) {
+    if (pc === key.root) return { rgb: ROOT_RGB, kind: 'static', role: 'root' };
+    if (highlightPCs && highlightPCs.has(pc)) {
+      return { rgb: CHORD_TONE_RGB, kind: 'static', role: 'chord' };
+    }
+    if (_scaleDegreeInKey(pc, key) !== null) {
+      return { rgb: SCALE_RGB, kind: 'static', role: 'scale' };
+    }
+    if (outOfKeyMode === 'off') return { rgb: [0, 0, 0], kind: 'off', role: 'out' };
+    return { rgb: CHROMATIC_DIM_RGB, kind: 'static', role: 'out' };
+  }
+
   function _paintInstrumentFull() {
     const submode = _instrumentSubmode;
     if (submode === 'drum') {
@@ -1280,27 +1311,13 @@
         }
         const midi = _midiForPad(r, c);
         const pc = ((midi % 12) + 12) % 12;
-        const inHighlight = highlightPCs.has(pc);
-        if (inHighlight) {
-          const rgb = pc === key.root ? ROOT_RGB : CHORD_TONE_RGB;
-          specs.push(_rgbSpec(idx, rgb[0], rgb[1], rgb[2]));
-          _recordPad(idx, rgb[0], rgb[1], rgb[2], 'active');
-          continue;
-        }
-        const deg = _scaleDegreeInKey(pc, key);
-        if (deg === null) {
-          if (_outOfKeyMode === 'off') {
-            specs.push(_offSpec(idx));
-            _recordPad(idx, 0, 0, 0, 'off');
-          } else {
-            specs.push(_rgbSpec(idx, CHROMATIC_DIM_RGB[0], CHROMATIC_DIM_RGB[1], CHROMATIC_DIM_RGB[2]));
-            _recordPad(idx, CHROMATIC_DIM_RGB[0], CHROMATIC_DIM_RGB[1], CHROMATIC_DIM_RGB[2], 'static');
-          }
+        const col = _instrumentPadColor(pc, key, highlightPCs, _outOfKeyMode);
+        if (col.kind === 'off') {
+          specs.push(_offSpec(idx));
+          _recordPad(idx, 0, 0, 0, 'off');
         } else {
-          const rgb = DEGREE_RGB[deg - 1] || DEGREE_RGB[0];
-          const [rr, gg, bb] = _scaledRgb(rgb, 0.4);
-          specs.push(_rgbSpec(idx, rr, gg, bb));
-          _recordPad(idx, rr, gg, bb, 'static');
+          specs.push(_rgbSpec(idx, col.rgb[0], col.rgb[1], col.rgb[2]));
+          _recordPad(idx, col.rgb[0], col.rgb[1], col.rgb[2], col.kind);
         }
       }
     }
@@ -2596,7 +2613,11 @@
             { name: 'Key root',   rgb: ROOT_RGB },
             { name: 'Chord tone', rgb: CHORD_TONE_RGB },
             { name: 'Next-chord', rgb: PULSE_PALETTE_RGB[13] },
-            { name: 'Scale',      rgb: DEGREE_RGB[1] },
+            // Must be the SAME constant the grid paints in-key pads
+            // with (_instrumentPadColor) — a legend that promises one
+            // color while pads render another is how the "faint washes
+            // match nothing" report happened.
+            { name: 'Scale',      rgb: SCALE_RGB },
             { name: 'Out of key', rgb: _outOfKeyMode === 'off' ? [0, 0, 0] : CHROMATIC_DIM_RGB },
         ];
         if (sub === 'melody' && _songMelody.length) {
@@ -2617,6 +2638,21 @@
 
   // Exposed helpers for jam.js verifier (canonical symbol match).
   api._canonicalChordKey = _canonicalChordKey;
+
+  // Pure seams for DOM-free node tests (launchpad.test.mjs): the note
+  // grid geometry + the note→scale-membership→color mapping the Notes
+  // surface renders. Constants ride along so tests assert legend/grid
+  // color identity instead of hard-coding RGB triples.
+  api._internals = {
+    midiForPad: _midiForPad,
+    scaleDegreeInKey: _scaleDegreeInKey,
+    instrumentPadColor: _instrumentPadColor,
+    OPEN_JAM_BASE_MIDI,
+    ROOT_RGB,
+    CHORD_TONE_RGB,
+    SCALE_RGB,
+    CHROMATIC_DIM_RGB,
+  };
 
   window.Launchpad = api;
 })();

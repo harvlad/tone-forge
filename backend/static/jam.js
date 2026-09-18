@@ -7259,7 +7259,10 @@
     if (parts.length < 2) return null;
     const root = NOTE_NAME_TO_PC[parts[0]];
     if (root == null) return null;
-    const scale = /minor/i.test(parts[1]) ? 'Minor' : 'Major';
+    // ^min matches "minor", "Minor" AND the abbreviated "min" — an
+    // abbreviating producer must not silently flip the key to Major
+    // (the Notes-surface key overlay derives from this).
+    const scale = /^min/i.test(parts[1]) ? 'Minor' : 'Major';
     const intervals = scale === 'Major' ? MAJOR_INTERVALS : MINOR_INTERVALS;
     const pitchClasses = new Set(intervals.map(i => (root + i) % 12));
     return { root, scale, pitchClasses };
@@ -9433,10 +9436,18 @@
     const grid = document.getElementById('lp-grid');
     if (!grid) return;
     // Only apply the "you-are-here" contrast (dim static / boost active)
-    // when the current paint actually has an active pad. In modes like
-    // Jam In Key or Melody Practice there is no single sounding pad, so
-    // every pad should stay at full brightness.
-    const hasActive = colors.some((c) => c && c.kind === 'active');
+    // in the SONG-CHORD modes, where exactly one chord pad is "now" and
+    // knocking the rest back is the point. Gating on mode (not just on
+    // any 'active' pad existing) matters: the instrument grids paint a
+    // persistent overlay (melody NOW pad) and used to mark root/chord
+    // pads 'active' — one such pad dimmed EVERY in-key scale pad to 28%
+    // brightness, which is how the Notes surface's key tints read as
+    // near-black washes.
+    const mode = (window.Launchpad && window.Launchpad.getMode)
+      ? window.Launchpad.getMode() : '';
+    const songMode = mode === 'song-verify' || mode === 'song-display'
+      || mode === 'display';
+    const hasActive = songMode && colors.some((c) => c && c.kind === 'active');
     grid.classList.toggle('lp-grid--has-active', hasActive);
     const pads = grid.querySelectorAll('.lp-pad');
     for (const btn of pads) {
@@ -9540,11 +9551,16 @@
     if (v && v.classList.contains('active')) {
       const s = _currentPadSurface();
       if (s === 'notes') {
-        // 'drum' is a hardware sampler stub with no web voice — coerce
-        // to synth so the Notes tab always sounds. 'free-play' is a
+        // 'drum' is a hardware sampler stub with no web voice, and
+        // 'bass' restricts the driver's painter to the BOTTOM 4 rows
+        // (a hardware register workflow) — on the Notes surface that
+        // rendered as "top half of the grid is dead" (field report:
+        // Cross Bones Style auto-suggested the play-bassline preset,
+        // whose submode is bass). Coerce both to synth: Notes is
+        // always the full-range in-key grid. 'free-play' is a
         // top-level mode, not an instrument-<sub>.
         let sub = state.settings.launchpadInstrumentSubmode || 'synth';
-        if (sub === 'drum') sub = 'synth';
+        if (sub === 'drum' || sub === 'bass') sub = 'synth';
         return sub === 'free-play' ? 'free-play' : ('instrument-' + sub);
       }
       if (s === 'chords') return 'song-verify';
