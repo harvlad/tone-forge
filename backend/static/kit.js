@@ -1467,41 +1467,16 @@
     var wrap = document.createElement("div");
     wrap.className = "kit-arr";
 
-    var controls = document.createElement("div");
-    controls.className = "kit-arr-controls";
-
-    var label = document.createElement("span");
-    label.className = "kit-arr-label";
-    label.textContent = "Arrangement";
-
+    // The Arrangement label + Rec / Play / Clear capture controls are
+    // GONE (user call, matching iOS which dropped the same chips as
+    // low-value — JamView "capture chips were removed"). Only the
+    // song-part section strip renders: proportional blocks + playhead +
+    // active-block highlight + captured-pads fill. The capture/replay
+    // MACHINERY below (toggleArrRecording/toggleArrPlaying/
+    // clearArrangement, arrangementTick's record branch, persistence)
+    // stays intact — project restores still apply stored arrangements
+    // and a future surface can re-expose the controls.
     var hasBlocks = s.arr.blocks.length > 0;
-
-    var recBtn = document.createElement("button");
-    recBtn.type = "button";
-    recBtn.className = "kit-toggle kit-arr-rec";
-    recBtn.textContent = "● Rec";
-    recBtn.title = "Record which pads you jam through each section, live with the song";
-    recBtn.addEventListener("click", function () { toggleArrRecording(s); });
-
-    var playBtn = document.createElement("button");
-    playBtn.type = "button";
-    playBtn.className = "kit-toggle kit-arr-play";
-    playBtn.textContent = "▶ Play arrangement";
-    playBtn.title = "Replay the captured pads hands-free — pads come in and out per section";
-    playBtn.addEventListener("click", function () { toggleArrPlaying(s); });
-
-    var clearBtn = document.createElement("button");
-    clearBtn.type = "button";
-    clearBtn.className = "kit-toggle kit-arr-clear";
-    clearBtn.textContent = "Clear";
-    clearBtn.title = "Forget the captured arrangement for this song";
-    clearBtn.addEventListener("click", function () { clearArrangement(s); });
-
-    controls.appendChild(label);
-    controls.appendChild(recBtn);
-    controls.appendChild(playBtn);
-    controls.appendChild(clearBtn);
-    wrap.appendChild(controls);
 
     var strip = document.createElement("div");
     strip.className = "kit-arr-strip";
@@ -1540,14 +1515,9 @@
     wrap.appendChild(note);
 
     s.arr.els = {
-      wrap: wrap, recBtn: recBtn, playBtn: playBtn, clearBtn: clearBtn,
+      wrap: wrap, recBtn: null, playBtn: null, clearBtn: null,
       strip: strip, note: note, playhead: playhead, segEls: segEls,
     };
-    if (!hasBlocks) {
-      recBtn.classList.add("is-disabled");
-      playBtn.classList.add("is-disabled");
-      clearBtn.classList.add("is-disabled");
-    }
     refreshArrangementFilled(s);
     updateArrControls(s);
     return wrap;
@@ -1562,9 +1532,12 @@
     });
   }
 
-  /** Sync the Rec/Play toggle button visuals to state. */
+  /** Sync the Rec/Play toggle button visuals to state. No-op since the
+   * control row was removed (els.recBtn/playBtn are null) — kept, with
+   * the guard, because the toggle machinery still calls it and a future
+   * surface may re-expose the buttons. */
   function updateArrControls(s) {
-    if (!s.arr.els) return;
+    if (!s.arr.els || !s.arr.els.recBtn || !s.arr.els.playBtn) return;
     s.arr.els.recBtn.classList.toggle("is-recording", s.arr.recording);
     s.arr.els.recBtn.setAttribute("aria-pressed", String(s.arr.recording));
     s.arr.els.playBtn.classList.toggle("is-on", s.arr.playing);
