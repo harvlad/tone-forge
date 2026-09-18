@@ -8333,6 +8333,22 @@
     state.inputSurface.surfaces[name] = !!active;
   }
 
+  // PRESS ARBITRATION: true when the merged pad surface (#view-kit) is
+  // active AND showing the Samples grid. The kit then owns every pad
+  // press — lp-hw.js routes a hardware Note On into the on-screen pad
+  // (padDown → the sample loop), so the Launchpad driver's note/chord
+  // synth must stay SILENT for the same press or the user hears a synth
+  // note stacked on the loop (the "notes tab playing on top" bug: any
+  // persisted/leaked instrument or chord driver mode double-fired).
+  // Notes/Chords synth sounds ONLY when its own surface tab is the
+  // explicitly selected one. `data-pad-surface` is stamped by the tab
+  // switcher; absent (older markup) means the kit grid — i.e. samples.
+  function _samplesSurfaceOwnsPress() {
+    const v = document.getElementById('view-kit');
+    if (!v || !v.classList.contains('active')) return false;
+    return (v.dataset.padSurface || 'samples') === 'samples';
+  }
+
   // Feed pad presses into both the legacy Launchpad ring buffer AND the
   // shared InputSurface sink, then trigger the pad synth so the user
   // actually hears their playing. Shared by hardware presses and
@@ -8360,6 +8376,11 @@
       }
       return;
     }
+    // Samples surface owns the press outright: no synth voice, no
+    // chord-verify ring entry — the press IS a sample trigger and the
+    // kit already handles it (audio + telemetry). See the predicate's
+    // comment; this holds regardless of what mode the driver is in.
+    if (_samplesSurfaceOwnsPress()) return;
     const now = performance.now();
     const buf = state.launchpad.lastPresses;
     const cutoff = now - 2000;
