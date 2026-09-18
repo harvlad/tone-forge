@@ -521,7 +521,12 @@ struct SequenceBuilderSheet: View {
             guard let pad = packPads.first(where: { $0.padIdx == cellIdx }) else { return nil }
             return CellInfo(
                 label: pad.name,
-                tint: TFTheme.familyTint(pad.family)
+                // Same resolver the Launchpad pad tiles use (hex →
+                // category → family), so a Sequence Builder pad and its
+                // grid twin are the same color. Was TFTheme.familyTint
+                // off the coarse 8-bucket family, which collapsed every
+                // melodic stem into one pink `.stabs` block (D-039).
+                tint: TFTheme.color(hex: ModeCoordinator.padColorHint(for: pad))
             )
         case .keyChords:
             let symbols = keyChordSymbols

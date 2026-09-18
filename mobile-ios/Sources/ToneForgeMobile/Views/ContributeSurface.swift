@@ -32,8 +32,14 @@ struct ContributeSurface: View {
     /// Sample mode's escape hatch to the advanced 8×8 quadrant grid
     /// (local assignments outside the pack quadrant live there).
     @State private var showAdvancedGrid = false
-    /// Toggle between Pads and Sequencer in sample mode.
-    @State private var showSequencer = false
+    /// Toggle between Pads and Sequencer in sample mode. Lives on
+    /// AppState (not view-local) so the hardware Launchpad Session
+    /// button (CC 93) toggles the SAME panel — see
+    /// AppState.sequencerPanelOpen / LaunchpadControlSurface (D-039).
+    private var showSequencer: Bool {
+        get { appState.sequencerPanelOpen }
+        nonmutating set { appState.sequencerPanelOpen = newValue }
+    }
     /// Arrange mode on the advanced 8×8 grid: drag pads to swap cells.
     @State private var arranging = false
     /// Beat Capture sheet (mic rhythm → drum pattern).

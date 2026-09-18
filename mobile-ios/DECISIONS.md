@@ -1506,3 +1506,75 @@ fixture proves `activate()` actually clears the flag, headless).
 `melodyPlayer`'s rebuild block only (rejected — leaves the window between
 `currentBundle = bundle` and the rebuild, and reads as "player rebuild is the
 fix", which is the mistake D-036 made).
+
+## D-039 — MK3 Session/play wired to the iOS sequencer (D-037 correction) + one pad-color source
+
+**Date:** 2026-09-19
+**Corrects:** D-037's claim that Session (CC 93), pattern select (CC 101–108)
+and sequencer play/stop (CC 89) were "deliberately inert + dark — no iOS
+sequencer panel." That premise was wrong.
+
+**Context (the correction):** iOS DOES have a sequencer. The Contribute
+surface's "Sequencer" chip (`ContributeSurface.sequencerToggle`) flips
+`showSequencer`, which swaps the pad grid for `SequencerTabView` (Pattern /
+Timeline over a `SequencerPlayer`); a per-pad `SequenceBuilderSheet` (radial
+menu) records pad loops with its own preview player. D-037 conflated "no
+desktop-style A–D pattern-slot grid" with "no sequencer at all" and left three
+CCs hard-inert.
+
+**Decision (FIX 1 — wiring):**
+- `showSequencer` is lifted out of the `ContributeSurface` view into
+  `AppState.sequencerPanelOpen` (a computed `showSequencer` shim keeps the
+  view code intact). Session (CC 93) toggles that SAME state — the exact
+  mirror of desktop's `LaunchpadControlSurface.onSequencerPanelToggle` /
+  `isSequencerPanelOpen` seam. LED lit while open. The panel renders in Sample
+  mode, identical to the on-screen chip's own constraint.
+- Sequencer play/stop (CC 89) toggles the panel's preview loop.
+  `SequencerTabView` registers its `SequencerPlayer` on
+  `AppState.activeSequencerPlayer` (weak) while on screen and clears it on
+  disappear; `AppState.toggleSequencerPreview()` does `play(sync:false)` /
+  `stop()`. LED pulses while playing. Reachable only while the panel is open
+  (its view owns the player) — an ACCEPTED constraint: Session opens, then
+  play works. Best-effort LED accuracy rides the existing 10 Hz control-LED
+  repaint.
+- Pattern select (CC 101–108) stays genuinely inert + dark, now marked PARITY
+  `na` (not `missing`): iOS has no pattern-SLOT model — the Sequence Builder
+  records ONE pad sequence, there are no slots to pick. The shared engine
+  `LaunchpadControlMapping` assignment is unchanged (a button never means
+  something different per platform); only the iOS SURFACE dispatch/LEDs moved.
+
+**Decision (FIX 2 — one pad-color source):** the Sequence Builder's `.pads`
+tiles tinted off `TFTheme.familyTint(pad.family)` — the coarse 8-bucket
+`SampleFamily`, which collapses guitar-lead / guitar-chords / synth-chords /
+bass-stab / vocal-lead all into one pink `.stabs` block, AND is a SEPARATE
+palette table from the launchpad's (`.pads` is `0x6E5AF7` in `familyTint` vs
+`0xA855F7` in `familyColor` — already drifted). The Launchpad tiles
+(`SamplePadGrid4x4` via `ModeCoordinator+Layout`) color a pad by its real
+per-category hex. Both paths now go through ONE resolver,
+`ModeCoordinator.padColorHint(for:)` = explicit per-pad hex (auto-kit / borrow
+pads carry a `kit_builder._CATEGORY_HEX` value from the backend) → musical
+`category` (mirrors that same map / `JamView.categoryTint`) → coarse family.
+A Sequence Builder pad and its Launchpad twin can no longer differ.
+
+**Where:** `Sources/ToneForgeMobile/Launchpad/LaunchpadControlSurface.swift`
+(new `onSequencerPanelToggle` / `onSequencerPlayStop` +
+`isSequencerPanelOpen` / `isSequencerPlaying`, dispatch + LEDs),
+`ToneForgeApp.swift` (`sequencerPanelOpen`, weak `activeSequencerPlayer`,
+`toggleSequencerPreview`, `makeControlSurface` closures),
+`Views/ContributeSurface.swift` (computed `showSequencer`),
+`Views/Sequencer/SequencerTabView.swift` (register/unregister the player),
+`Contribution/ModeCoordinator+Layout.swift` (`categoryColor`, `padColorHint`,
+layer routed through it), `Views/Sequencer/SequenceBuilderSheet.swift` (`.pads`
+tint via `padColorHint`), engine `LaunchpadControlMapping.swift` (doc only).
+Pinned by `LaunchpadControlSurfaceTests` (Session/play dispatch, pattern-select
+inert, Session/sequencer LED frame) and new `PadColorResolutionTests`
+(hex → category → family priority; category beats family; twin match).
+
+**Alternatives:** forcing Sample mode on Session-open (rejected — the on-screen
+chip doesn't, so the hardware button matches it exactly); registering the
+`SequenceBuilderSheet` preview player as the active one too (rejected — two
+players clobbering one weak slot; the Session button opens the panel, not the
+pad sheet); reproducing only `hexColorHint ?? familyColor` in the resolver
+(rejected — routing BOTH surfaces through one function that ALSO honors the
+`category` string aligns iOS with desktop/web and makes drift structurally
+impossible).

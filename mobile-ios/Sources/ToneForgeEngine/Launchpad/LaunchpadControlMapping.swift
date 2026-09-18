@@ -37,10 +37,13 @@ public enum LaunchpadControlMapping {
     }
 
     /// The approved function set. Platform surfaces may leave a
-    /// function unwired (e.g. iOS has no sequencer PANEL, so
-    /// `.sequencerPanelToggle` / `.patternSelect` / `.sequencerPlayStop`
-    /// stay inert there) — but the ASSIGNMENT is fixed: a button never
-    /// means something different on another platform.
+    /// function unwired where the concept doesn't exist: iOS has no
+    /// pattern-SLOT model (desktop's A–D pattern grid), because the
+    /// Sequence Builder records ONE pad sequence rather than filling
+    /// slots — so `.patternSelect` stays inert there (PARITY `na`).
+    /// iOS DOES drive `.sequencerPanelToggle` and `.sequencerPlayStop`
+    /// against its Contribute sequencer panel. The ASSIGNMENT is fixed:
+    /// a button never means something different on another platform.
     public enum Function: Equatable, Sendable {
         /// ▷ Play (CC 20) — song transport play/pause.
         case playPause

@@ -1,11 +1,13 @@
 // LaunchpadControlSurfaceTests.swift
 //
 // The iOS host layer for the D-036 function-button map: actions fire
-// on press only, empty-grid/out-of-range guards hold, the unmapped
-// sequencer trio stays inert, and the LED frame matches the desktop
-// contract (selected-mode bright, loop-lock amber, record pulse,
-// layer accents, section blocks). The CC → function table itself is
-// pinned in the engine (LaunchpadControlMappingTests).
+// on press only, empty-grid/out-of-range guards hold, Session (CC 93)
+// and sequencer play/stop (CC 89) drive the Contribute sequencer panel
+// while pattern-select (CC 101–108) stays inert (no iOS slot model,
+// PARITY `na`), and the LED frame matches the desktop contract
+// (selected-mode bright, loop-lock amber, record pulse, layer accents,
+// section blocks, Session open, sequencer pulse). The CC → function
+// table itself is pinned in the engine (LaunchpadControlMappingTests).
 
 import XCTest
 import ToneForgeEngine
@@ -117,14 +119,30 @@ final class LaunchpadControlSurfaceTests: XCTestCase {
         XCTAssertEqual(toggles, [1])
     }
 
-    func testUnmappedSequencerTrioIsInert() {
+    func testSessionAndSequencerPlayDispatch() {
+        var panelToggles = 0
+        var playStops = 0
+        surface.onSequencerPanelToggle = { panelToggles += 1 }
+        surface.onSequencerPlayStop = { playStops += 1 }
+        // Session (CC 93) and sequencer play/stop (CC 89) now drive the
+        // Contribute sequencer panel — fire on press, not release.
+        surface.handle(.top(col: 3), down: false)
+        surface.handle(.right(row: 8), down: false)
+        XCTAssertEqual(panelToggles, 0)
+        XCTAssertEqual(playStops, 0)
+        surface.handle(.top(col: 3), down: true)
+        surface.handle(.right(row: 8), down: true)
+        XCTAssertEqual(panelToggles, 1)
+        XCTAssertEqual(playStops, 1)
+    }
+
+    func testPatternSelectStaysInert() {
         surface.attachLights(lights)
         let before = lights.frames.count
-        // Session (panel), pattern select, sequencer play/stop: no iOS
-        // sequencer panel — presses must not repaint or crash.
-        surface.handle(.top(col: 3), down: true)
+        // Pattern select (CC 101–108): no iOS slot model (PARITY `na`)
+        // — presses must not dispatch, repaint, or crash.
         surface.handle(.trackSelect(col: 1), down: true)
-        surface.handle(.right(row: 8), down: true)
+        surface.handle(.trackSelect(col: 8), down: true)
         XCTAssertEqual(lights.frames.count, before)
     }
 
@@ -186,10 +204,25 @@ final class LaunchpadControlSurfaceTests: XCTestCase {
         XCTAssertEqual(frame[49], LaunchpadLight.off)
     }
 
-    func testFrameKeepsUnmappedSequencerButtonsDark() {
+    func testFrameSessionAndSequencerReflectState() {
+        // Panel closed + preview idle: Session dim, play/stop dim green.
+        surface.isSequencerPanelOpen = { false }
+        surface.isSequencerPlaying = { false }
+        let idle = surface.controlLightFrame()
+        XCTAssertEqual(idle[93], .solid(colorHint: 0x1E1E1E))
+        XCTAssertEqual(idle[89], .solid(colorHint: 0x0A280A))
+
+        // Panel open + preview running: Session bright, play/stop pulse.
+        surface.isSequencerPanelOpen = { true }
+        surface.isSequencerPlaying = { true }
+        let live = surface.controlLightFrame()
+        XCTAssertEqual(live[93], .solid(colorHint: 0xFFFFFF))
+        XCTAssertEqual(live[89], .pulse(colorHint: 0x00FF00))
+    }
+
+    func testFrameKeepsPatternSelectButtonsDark() {
+        // Pattern select has no iOS slot model (PARITY `na`) — always dark.
         let frame = surface.controlLightFrame()
-        XCTAssertEqual(frame[93], LaunchpadLight.off)
-        XCTAssertEqual(frame[89], LaunchpadLight.off)
         for cc in 101...108 {
             XCTAssertEqual(frame[cc], LaunchpadLight.off)
         }

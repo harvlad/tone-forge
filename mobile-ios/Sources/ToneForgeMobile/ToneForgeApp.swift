@@ -451,6 +451,18 @@ public final class AppState: ObservableObject {
     /// Pattern id the sequencer should seed itself from on next open
     /// (set by Beat Capture "Open in Sequencer"; cleared once consumed).
     @Published public var pendingSequencerPatternId: UUID?
+    /// Contribute sequencer panel open state. Lifted out of the view
+    /// so the hardware Launchpad Session button (CC 93) can toggle the
+    /// SAME panel the on-screen sequencer chip drives — the desktop
+    /// LaunchpadControlSurface.onSequencerPanelToggle / isSequencerPanelOpen
+    /// seam, mirrored on iOS (D-039). The panel renders in Sample mode.
+    @Published public var sequencerPanelOpen = false
+    /// The Contribute sequencer panel's live SequencerPlayer while the
+    /// panel is on screen (SequencerTabView registers it on appear,
+    /// clears on disappear). Weak so the view keeps sole ownership; the
+    /// hardware sequencer play/stop button (CC 89) toggles this preview.
+    /// nil ⇒ the button is inert (panel closed).
+    public weak var activeSequencerPlayer: SequencerPlayer?
     public lazy var micRecorder: MicRecorder =
         MicRecorder(session: audioEngine.session)
 
@@ -1183,7 +1195,37 @@ public final class AppState: ObservableObject {
             let t = self.songSeconds
             return sections.firstIndex { $0.start <= t && t < $0.end }
         }
+        // Session (CC 93) = the Contribute sequencer panel — the same
+        // `showSequencer` state the on-screen chip drives (desktop's
+        // onSequencerPanelToggle / isSequencerPanelOpen seam). The panel
+        // renders in Sample mode, exactly as the on-screen toggle does.
+        surface.onSequencerPanelToggle = { [weak self] in
+            self?.sequencerPanelOpen.toggle()
+        }
+        surface.isSequencerPanelOpen = { [weak self] in
+            self?.sequencerPanelOpen ?? false
+        }
+        // Sequencer play/stop (CC 89) = the panel's preview loop.
+        surface.onSequencerPlayStop = { [weak self] in
+            self?.toggleSequencerPreview()
+        }
+        surface.isSequencerPlaying = { [weak self] in
+            self?.activeSequencerPlayer?.isPlaying ?? false
+        }
         return surface
+    }
+
+    /// Hardware sequencer play/stop (CC 89): toggle the Contribute
+    /// sequencer panel's preview loop. Reachable only while the panel
+    /// is open (its SequencerTabView owns the player) — an accepted iOS
+    /// constraint: Session (CC 93) opens the panel, then this plays it.
+    func toggleSequencerPreview() {
+        guard let player = activeSequencerPlayer else { return }
+        if player.isPlaying {
+            player.stop()
+        } else {
+            player.play(sync: false)
+        }
     }
 
     /// Generic MIDI note controllers (keyboards / pad boxes). Separate

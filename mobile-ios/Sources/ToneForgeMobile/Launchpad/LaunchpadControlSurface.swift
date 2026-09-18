@@ -10,10 +10,16 @@
 //
 // iOS deviations from the desktop wiring (assignment unchanged, the
 // buttons are just INERT and dark where the concept doesn't exist):
-//   * Session (CC 93), pattern select (CC 101–108) and sequencer
-//     play/stop (CC 89) stay unmapped — iOS has no global sequencer
-//     panel; SequenceBuilderSheet is pad-scoped (opened from a pad's
-//     radial menu), so there is nothing app-level to toggle/select.
+//   * Session (CC 93) toggles the Contribute sequencer panel and
+//     sequencer play/stop (CC 89) drives that panel's preview loop —
+//     iOS DOES have a sequencer (the Contribute "Sequencer" chip opens
+//     SequencerTabView; the Sequence Builder records pad loops). These
+//     mirror desktop's onSequencerPanelToggle / onSequencerPlayStop +
+//     isSequencerPanelOpen / isSequencerPlaying seam (D-039).
+//   * Pattern select (CC 101–108) stays unmapped + dark — iOS has no
+//     pattern-SLOT model (desktop's A–D grid); the Sequence Builder
+//     records ONE pad sequence, so there are no slots to pick. PARITY
+//     marks these `na`, not `missing`.
 //   * Record Arm (CC 1) drives the session OUTPUT recorder
 //     (OutputRecorder), which has no distinct `armed` state on iOS —
 //     the LED goes dim-red ↔ pulsing red.
@@ -66,6 +72,14 @@ public final class LaunchpadControlSurface {
     /// Jump to section block `index` — the SAME path as tapping the
     /// on-screen section strip (lock-follow semantics included).
     public var onSectionJump: (Int) -> Void = { _ in }
+    /// Session (CC 93) — open/close the Contribute sequencer panel (the
+    /// same `showSequencer` state the on-screen chip drives). Mirrors
+    /// desktop's onSequencerPanelToggle.
+    public var onSequencerPanelToggle: () -> Void = {}
+    /// Sequencer play/stop (CC 89) — start/stop the sequencer panel's
+    /// preview loop. Reachable while the panel is open (its
+    /// SequencerTabView owns the player); an accepted iOS constraint.
+    public var onSequencerPlayStop: () -> Void = {}
 
     // MARK: - Host wiring (LED state)
 
@@ -81,6 +95,10 @@ public final class LaunchpadControlSurface {
     public var sectionCount: () -> Int = { 0 }
     /// Section block currently under the playhead, or nil.
     public var activeSectionIndex: () -> Int? = { nil }
+    /// Session LED: lit while the Contribute sequencer panel is open.
+    public var isSequencerPanelOpen: () -> Bool = { false }
+    /// Sequencer play/stop LED: pulses while the preview loop runs.
+    public var isSequencerPlaying: () -> Bool = { false }
 
     /// Momentary press feedback duration (Stop Clip amber, Chord).
     public var flashDuration: TimeInterval = 0.18
@@ -130,8 +148,14 @@ public final class LaunchpadControlSurface {
             onLoopLockToggle()
         case .gridSize(let count):
             onGridSize(count)
-        case .sequencerPanelToggle, .patternSelect, .sequencerPlayStop:
-            // No iOS sequencer panel (see header) — inert, no flash.
+        case .sequencerPanelToggle:
+            onSequencerPanelToggle()
+        case .sequencerPlayStop:
+            onSequencerPlayStop()
+        case .patternSelect:
+            // iOS has no pattern-SLOT model (desktop's A–D grid); the
+            // Sequence Builder records ONE pad sequence, nothing to
+            // select. Genuinely inert + dark (PARITY `na`), no flash.
             return
         case .instantGroove:
             // Parity with the on-screen Groove chip, disabled on an
@@ -228,9 +252,10 @@ public final class LaunchpadControlSurface {
         frame[92] = .solid(colorHint:
             padCount() == 64 ? Color.bright : Color.dim)
 
-        // Session = sequencer panel: unmapped on iOS — dark, so a
-        // desktop-conditioned user reads "not available here".
-        frame[93] = .off
+        // Session = sequencer panel: lit while the Contribute panel is
+        // open (desktop parity), dim otherwise.
+        frame[93] = .solid(colorHint:
+            isSequencerPanelOpen() ? Color.bright : Color.dim)
         // Chord = Instant Groove.
         frame[95] = flashing.contains(95)
             ? .solid(colorHint: Color.amber)
@@ -261,9 +286,13 @@ public final class LaunchpadControlSurface {
             }
         }
 
-        // Pattern select + sequencer play/stop: unmapped on iOS.
+        // Pattern select: no iOS slot model (PARITY `na`) — dark.
         for cc in 101...108 { frame[cc] = .off }
-        frame[89] = .off
+        // Sequencer play/stop: pulse green while the preview loop runs,
+        // dim green when idle (desktop parity).
+        frame[89] = isSequencerPlaying()
+            ? .pulse(colorHint: Color.green)
+            : .solid(colorHint: Color.greenDim)
 
         // Section blocks: lit where a block exists, pulsing on the
         // block under the playhead.
