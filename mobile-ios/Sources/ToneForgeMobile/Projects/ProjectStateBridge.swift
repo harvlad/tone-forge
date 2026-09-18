@@ -146,6 +146,27 @@ enum ProjectStateBridge {
 
     // MARK: - Reset
 
+    /// Song-activation swap for a song with NO saved workspace: empty
+    /// the GLOBAL stores (assignment table, pad FX map, hidden set).
+    /// These are UserDefaults singletons, so without this swap a song
+    /// simply INHERITED whatever the previous song's workspace (or an
+    /// old session) left in them — phantom pack-pad tiles on every
+    /// song that lacked a project of its own. The per-song stores
+    /// (section gates, arrangement) are keyed by analysisId and cannot
+    /// leak across songs — and clearing them here would delete
+    /// pre-Projects state — so unlike `reset` (the explicit user
+    /// action) they are deliberately untouched. Ported from the
+    /// desktop fix (D-034/D-035, 8e56570c).
+    @MainActor
+    static func activateFresh(
+        padAssignments: PadAssignmentStore,
+        sampleSettings: SampleSettingsStore
+    ) {
+        padAssignments.replaceAll([:])
+        sampleSettings.padEffectsByKey = [:]
+        sampleSettings.hiddenPadKeys = []
+    }
+
     /// Clear the workspace state for `analysisId` back to the song's
     /// defaults. The sequencer pattern LIBRARY is untouched — patterns
     /// are a global collection the user may use in other songs; only

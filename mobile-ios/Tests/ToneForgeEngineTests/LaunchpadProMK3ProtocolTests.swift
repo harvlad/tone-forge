@@ -306,4 +306,38 @@ final class LaunchpadProMK3ProtocolTests: XCTestCase {
         ])
         XCTAssertEqual(messages, [.noteOn(channel: 0, note: 11, velocity: 100)])
     }
+
+    // MARK: - Port-family predicate (synth-leak exclusion)
+
+    func testFamilyPortMatchesAllThreeInterfaces() {
+        // Fully-enumerated names, as the physical device reports them.
+        for port in ["LPProMK3 MIDI", "LPProMK3 DIN", "LPProMK3 DAW"] {
+            XCTAssertTrue(LP.isFamilyPort(
+                name: port, displayName: "Launchpad Pro MK3 \(port)"))
+        }
+    }
+
+    func testFamilyPortMatchesEveryEnumerationStage() {
+        // Desktop D-031: CoreMIDI resolves display names LATE during a
+        // plug-in burst — the undecorated window is exactly where the
+        // old exact-name/decorated-displayName check leaked the DAW/DIN
+        // interfaces to the keyboard transport (the "dual pad mapping"
+        // synth leak, D-034 / 8e56570c).
+        XCTAssertTrue(LP.isFamilyPort(name: "LPProMK3 DAW", displayName: ""))
+        XCTAssertTrue(LP.isFamilyPort(name: "LPProMK3 DIN", displayName: "LPProMK3 DIN"))
+        XCTAssertTrue(LP.isFamilyPort(name: "", displayName: "Launchpad Pro MK3 LPProMK3 DAW"))
+        // Legacy decorated-name-only state keeps matching too.
+        XCTAssertTrue(LP.isFamilyPort(name: "", displayName: "Launchpad Pro MK3"))
+    }
+
+    func testFamilyPortRejectsOtherControllers() {
+        for (name, display) in [
+            ("KeyLab Essential 61", "Arturia KeyLab Essential 61"),
+            ("LPD8", "AKAI LPD8"),
+            ("Network Session 1", "Network Session 1"),
+            ("", ""),
+        ] {
+            XCTAssertFalse(LP.isFamilyPort(name: name, displayName: display))
+        }
+    }
 }

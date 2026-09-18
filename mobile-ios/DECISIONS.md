@@ -1343,3 +1343,46 @@ pads are file-backed renders that play with nothing downloaded); a separate
 canvas store keyed off-analysisId (rejected — the sentinel keeps ONE bridge
 and one snapshot shape across v1/v2); auto-creating an anonymous working
 canvas (rejected — a canvas with no Library row would strand its auto-saves).
+
+## D-036 — Synth-leak parity ports: Launchpad port-family exclusion + no-workspace store swap
+
+**Date:** 2026-09-18
+**Decision:** Port the two desktop synth-leak fixes (desktop D-031/D-034/D-035,
+commit 8e56570c) that the hardware-Launchpad audit confirmed iOS still had:
+
+1. **Port-family exclusion.** `MIDIKeyboardTransport.isLaunchpad` matched the
+   exact MIDI-port name OR the device-decorated display name — but the MK3
+   exposes THREE USB interfaces and CoreMIDI resolves display names LATE
+   during a plug-in burst, so the DAW/DIN ports matched neither branch, the
+   keyboard transport connected to them, and (default `.synth` routing) every
+   grid press ALSO voiced a wavetable note over its pad loop. The predicate is
+   now the shared engine `LaunchpadProMK3Protocol.isFamilyPort` — the
+   `"LPProMK3"` port-family fragment against name AND displayName, matching
+   all three ports at every enumeration stage. Pad hardware has exactly ONE
+   delivery authority.
+2. **No-workspace activation swap.** `ProjectCoordinator.songDidActivate`
+   early-returned when a song had no saved/working project, leaving the GLOBAL
+   stores (`PadAssignmentStore`, pad FX / hidden set on
+   `SampleSettingsStore`) holding the previous song's workspace — phantom pad
+   tiles on every song without a project. New
+   `ProjectStateBridge.activateFresh` empties exactly the global stores
+   (analysisId-keyed gates/arrangement and the pattern library are NOT leaks
+   and stay), with `sequencePadManager.stopAll()` BEFORE the swap so a
+   running pattern can't orphan its voice, then the grid re-derives.
+
+The third leg of 8e56570c (per-song melody-guide reset) needed no port: iOS
+already stops and rebuilds `melodyPlayer` per song in `AppState.activate`.
+
+**Where:** `Sources/ToneForgeEngine/Launchpad/LaunchpadProMK3Protocol.swift`
+(`portFamilyFragment`/`isFamilyPort`),
+`Sources/ToneForgeMobile/Launchpad/MIDIKeyboardTransport.swift`,
+`Sources/ToneForgeMobile/Projects/ProjectStateBridge.swift` (`activateFresh`),
+`Sources/ToneForgeMobile/Projects/ProjectCoordinator.swift`. Pinned by
+`LaunchpadControlMappingTests` (family-port cases, engine),
+`MIDIKeyboardTransportTests.testExcludesAllLaunchpadInterfacesMidEnumeration`,
+`ProjectStateBridgeTests.testActivateFreshClearsGlobalStoresOnly`.
+
+**Alternatives:** keeping per-platform predicates in sync by convention
+(rejected — that IS how iOS drifted); clearing the analysisId-keyed stores too
+(rejected — deletes pre-Projects state, desktop precedent).
+

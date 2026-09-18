@@ -243,7 +243,29 @@ public final class ProjectCoordinator: ObservableObject {
         let snapshot = pendingRestore
             ?? store.loadWorking(analysisId: analysisId)?.snapshot
         pendingRestore = nil
-        guard let snapshot else { return }
+        guard let snapshot else {
+            // No workspace for this song: swap the GLOBAL stores to the
+            // song's defaults. The old early-return left them holding
+            // the PREVIOUS song's workspace — its pack pads surfaced as
+            // phantom tiles on every song that lacked a project of its
+            // own (desktop D-034).
+            // A pattern still running on a slot about to vanish would
+            // sound on with no pad able to stop it (the orphaned-voice
+            // class of bug) — stop sequences before the swap (D-035).
+            app.modeCoordinator.sequencePadManager.stopAll()
+            suppressAutoSave = true
+            ProjectStateBridge.activateFresh(
+                padAssignments: app.padAssignmentStore,
+                sampleSettings: app.sampleSettings
+            )
+            suppressAutoSave = false
+            // Re-derive the surface from the now-empty stores, same as
+            // the restore path below — activate() built pad visuals /
+            // bindings from the pre-swap state.
+            app.modeCoordinator.applyGridContext()
+            app.modeCoordinator.refreshLayout()
+            return
+        }
 
         suppressAutoSave = true
         ProjectStateBridge.restore(
