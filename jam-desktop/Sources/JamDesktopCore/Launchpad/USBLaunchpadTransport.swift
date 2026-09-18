@@ -51,7 +51,8 @@ public protocol StampedPadTransport: AnyObject {
 @MainActor
 @Observable
 public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
-                                          StampedPadTransport {
+                                          StampedPadTransport,
+                                          ControlButtonLightTransport {
 
     // MARK: - Observable state
 
@@ -108,6 +109,14 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
     @ObservationIgnored private var outputEndpoint: MIDIEndpoint?
     /// PadIndex.rawValue → last light sent, for diffing.
     @ObservationIgnored private var ledCache: [Int: LaunchpadLight] = [:]
+    /// CC → last FUNCTION-BUTTON light sent. Separate from ledCache:
+    /// the grid path gates on PadIndex.isValid (11..88) and must keep
+    /// doing so, while control buttons live at CC addresses that gate
+    /// rejects (1–8, the x0/x9 rows, 90+). The two address spaces are
+    /// disjoint, but separate caches keep the redraw enumeration and
+    /// the diffing story per-surface. Retained across suspend and
+    /// unplug so a reconnect repaints every function LED too.
+    @ObservationIgnored private var controlLedCache: [Int: LaunchpadLight] = [:]
     /// Recent FLAPS — torn-down links and failed connects. Successful
     /// connects deliberately do NOT land here (see noteFlap).
     @ObservationIgnored private var flapTimes: [Date] = []
@@ -398,6 +407,37 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
         flush(specs)
     }
 
+    // MARK: - Control-button LEDs (ControlButtonLightTransport)
+
+    /// Light the FUNCTION buttons around the grid. Deliberately
+    /// bypasses the PadIndex.isValid gate above — ColorSpec encodes
+    /// any 7-bit address, and the MK3's LED lighting SysEx drives the
+    /// whole surface (PDF p.12: pads AND surrounding buttons); the
+    /// grid gate was the only obstacle to function-button LEDs.
+    /// The inverse gate applies instead: CCs that ARE valid grid
+    /// addresses are rejected, so a mis-caller can't paint pads
+    /// through this path and desync ledCache.
+    public func setControlLight(_ light: LaunchpadLight, cc: Int) {
+        setControlLights([cc: light])
+    }
+
+    public func setControlLights(_ frame: [Int: LaunchpadLight]) {
+        var specs: [LaunchpadProMK3Protocol.ColorSpec] = []
+        for (cc, light) in frame {
+            // Bypassing the grid gate must not mean owning the grid: a
+            // CC that IS a valid pad address (11..88) is grid territory,
+            // and painting it here would change the pad on the wire while
+            // ledCache still holds the old light — the next grid diff
+            // would then skip the repair. Reject, don't route.
+            guard (0...127).contains(cc), !PadIndex(cc).isValid,
+                  controlLedCache[cc] != light
+            else { continue }
+            controlLedCache[cc] = light
+            specs.append(spec(for: light, at: PadIndex(cc)))
+        }
+        flush(specs)
+    }
+
     private func spec(
         for light: LaunchpadLight, at index: PadIndex
     ) -> LaunchpadProMK3Protocol.ColorSpec {
@@ -423,8 +463,10 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
         }
     }
 
-    /// Repaint every pad from the cache — one SysEx message. Used on
-    /// connect and `resume()` so the hardware matches the app state.
+    /// Repaint every pad from the cache — one SysEx message (chunked
+    /// only if grid + control LEDs together exceed the 106-spec cap).
+    /// Used on connect and `resume()` so the hardware matches the app
+    /// state, function buttons included.
     private func redrawAll() {
         var specs: [LaunchpadProMK3Protocol.ColorSpec] = []
         for row in 1...8 {
@@ -432,6 +474,10 @@ public final class USBLaunchpadTransport: @preconcurrency LaunchpadTransport,
                 let index = PadIndex.at(row: row, col: col)
                 specs.append(spec(for: ledCache[index.rawValue] ?? .off, at: index))
             }
+        }
+        // Every control LED ever set (sorted for a stable wire order).
+        for (cc, light) in controlLedCache.sorted(by: { $0.key < $1.key }) {
+            specs.append(spec(for: light, at: PadIndex(cc)))
         }
         guard outputEndpoint != nil, !suspended else { return }
         for message in LaunchpadProMK3Protocol.ledMessages(specs) {

@@ -17,7 +17,6 @@ struct RootView: View {
     @StateObject private var queue = AnalysisQueueModel()
     @StateObject private var studio = StudioModel()
     @State private var showLaunchpad = false
-    @State private var showSequencer = false
     @State private var showRecordings = false
     @State private var showPacks = false
     @State private var showProjects = false
@@ -41,7 +40,7 @@ struct RootView: View {
                     onBeatTap: { showBeatCapture = true },
                     onSampleTap: { showLaunchpad = true },
                     onLaunchpadTap: { showLaunchpad = true },
-                    onSequencerTap: { showSequencer = true },
+                    onSequencerTap: { session.sequencerPanelOpen = true },
                     onRecordingsTap: { showRecordings = true },
                     onPacksTap: { showPacks = true },
                     onProjectsTap: { showProjects = true },
@@ -165,7 +164,7 @@ struct RootView: View {
             }
             ToolbarItem(placement: .automatic) {
                 Button {
-                    showSequencer.toggle()
+                    session.sequencerPanelOpen.toggle()
                 } label: {
                     Label("Sequencer", systemImage: "squares.below.rectangle")
                 }
@@ -277,7 +276,12 @@ struct RootView: View {
                     .transition(.scale(scale: 0.98).combined(with: .opacity))
             }
         }
-        .sheet(isPresented: $showSequencer) {
+        // Session-owned visibility (not local @State): the hardware
+        // Session button toggles it via SessionController, and the
+        // two-way sheet binding keeps a user dismissal honest for the
+        // button's LED (the projectsSheetRequested pattern, upgraded
+        // to a stateful flag because hardware needs open AND close).
+        .sheet(isPresented: $session.sequencerPanelOpen) {
             SequencerPanelView()
                 .environmentObject(model)
                 .environmentObject(session)
@@ -310,7 +314,7 @@ struct RootView: View {
                 .environmentObject(session)
         }
         .sheet(isPresented: $showBeatCapture) {
-            BeatCaptureSheet(onOpenInSequencer: { showSequencer = true })
+            BeatCaptureSheet(onOpenInSequencer: { session.sequencerPanelOpen = true })
                 .environmentObject(session)
         }
         .sheet(isPresented: $showVocoder) {

@@ -40,7 +40,6 @@ struct LaunchpadPanelView: View {
     @State private var showBorrowPicker = false   // "Add from another song"
     @State private var showRemix = false          // ✦ Remix transform sheet
     @State private var radialMenuState: PadRadialMenuState?
-    @State private var showSequencerEditor = false
     @State private var moveMode = false
     /// Launchpad Edit Mode (web/iOS parity, iOS commit 602a9043): OFF by
     /// default = the pads are a pure performance surface — no edit
@@ -53,9 +52,6 @@ struct LaunchpadPanelView: View {
     @AppStorage("jam.launchpad.editMode") private var editMode = false
     @State private var dragSourcePad: Int?
     @State private var showLayers = false
-    /// Arrangement section strip is collapsed by default so it doesn't eat grid
-    /// height; the Rec/Play/Clear line stays. Auto-expands while Rec/Play is on.
-    @State private var showArrangementStrip = false
 
     /// ONE 30 Hz driver for every animated readout in the panel (per-pad
     /// loop playheads + the cycle strip). The per-cell
@@ -95,8 +91,11 @@ struct LaunchpadPanelView: View {
                 // shared loop cycle + countdown to the next lock boundary, so
                 // "why is my pad waiting" reads as timing, not lag.
                 cycleStrip
-                // Live-capture arrangement: Rec through the song to capture
-                // which pads play per section, Play to replay hands-free.
+                // Section blocks: the song's arrangement at a glance, with
+                // the active block + capture fills highlighted. The Rec /
+                // Play / Clear control row is gone (iOS made the same IA
+                // call) — capture/replay machinery stays for restored
+                // workspaces and the hardware scene buttons.
                 arrangementRow
                 if showLayers {
                     LayerStackView().environmentObject(session)
@@ -225,11 +224,12 @@ struct LaunchpadPanelView: View {
                 }
             }
         }
-        .sheet(isPresented: $showSequencerEditor) {
-            SequencerPanelView()
-                .environmentObject(model)
-                .environmentObject(session)
-        }
+        // NO local sequencer sheet here: the panel opens the sequencer by
+        // setting session.sequencerPanelOpen (the radial edit /
+        // add-to-sequence paths below) and RootView's sheet is the ONE
+        // presenter. A local @State sheet bypassed that flag, so the MK3
+        // Session LED (CC93) showed "closed" while this sheet was up — and
+        // a hardware Session press then presented a SECOND sheet on top.
         .sheet(isPresented: $showBorrowPicker) {
             BorrowPickerView()
                 .environmentObject(session)
@@ -289,14 +289,14 @@ struct LaunchpadPanelView: View {
             if case .sequence(let patternId) = session.padAssignmentStore.slot(padIdx: padIdx),
                let pattern = session.patternStore.all().first(where: { $0.id == patternId }) {
                 session.sequencer.pattern = pattern
-                showSequencerEditor = true
+                session.sequencerPanelOpen = true
             }
 
         case .addToSequence:
             // Add this pad's sample to the step sequencer as a new track,
             // then open the sequencer so the user can place its steps.
             session.addPadToSequence(padIdx: padIdx, pad: pad)
-            showSequencerEditor = true
+            session.sequencerPanelOpen = true
 
         case .addSound:
             soundPickerTarget = padIdx
@@ -551,52 +551,18 @@ struct LaunchpadPanelView: View {
         }
     }
 
-    // MARK: - Live-capture arrangement
+    // MARK: - Section blocks (arrangement strip)
 
+    /// Only the section-blocks strip survives here — the Rec / Play /
+    /// Clear control row was removed (same call iOS made): the strip is
+    /// orientation, not a control surface. ArrangementController keeps
+    /// its capture/replay engine for restored workspaces and the
+    /// Launchpad scene buttons (D-036).
     @ViewBuilder
     private var arrangementRow: some View {
         let arr = session.arrangement
         if !arr.blocks.isEmpty {
-            VStack(spacing: 6) {
-                HStack(spacing: 10) {
-                    Button { showArrangementStrip.toggle() } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: showArrangementStrip ? "chevron.down" : "chevron.right")
-                                .font(.caption2)
-                            Text("Arrangement").font(.caption)
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Show/hide the section strip")
-                    Spacer(minLength: 8)
-                    Button { arr.toggleRecording() } label: {
-                        Label("Rec", systemImage: "record.circle")
-                            .font(.caption)
-                            .foregroundStyle(arr.recording ? JamTheme.error : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Record which pads you play in each section")
-                    Button { arr.togglePlaying() } label: {
-                        Label("Play", systemImage: "play.circle")
-                            .font(.caption)
-                            .foregroundStyle(arr.playing ? JamTheme.accent : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(arr.filledBlocks.isEmpty)
-                    .help("Replay the captured arrangement hands-free")
-                    Button { arr.clear() } label: {
-                        Label("Clear", systemImage: "trash")
-                            .font(.caption).foregroundStyle(Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(arr.filledBlocks.isEmpty)
-                    .help("Forget this song's captured arrangement")
-                }
-                if showArrangementStrip || arr.recording || arr.playing {
-                    arrangementStrip(arr)
-                }
-            }
+            arrangementStrip(arr)
         }
     }
 
