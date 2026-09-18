@@ -1,17 +1,18 @@
 // OutputRecorder.swift
 //
 // Records the SESSION'S AUDIO OUTPUT — the fully-processed mix the
-// user actually hears — by tapping the shared AVAudioEngine's
-// `outputNode` (bus 0). That bus carries the signal AFTER the whole
-// master chain (mainMixer → master EQ → comp → brickwall limiter →
-// outputNode, see AudioEngine's header), so the capture matches the
-// speakers sample-for-sample: song stems + pads + FX + master
-// processing, nothing pre-fader.
+// user actually hears — by tapping the LAST MASTER NODE feeding
+// outputNode (AudioEngine.masterTapNode: the brickwall limiter, or the
+// deepest built master node). The limiter → outputNode hop is a direct
+// connection, so the capture matches the speakers: song stems + pads +
+// FX + master processing, nothing pre-fader.
 //
-// Why the outputNode and not mainMixerNode: mainMixer sits BEFORE the
-// master FX inserts, so a tap there would miss the EQ/compressor/
-// limiter — recording something the user never heard. The outputNode
-// input is the one point downstream of everything.
+// Why not outputNode itself: it REFUSES recording taps —
+// installTapOnBus throws an NSException from
+// AUGraphNodeBaseV3::CreateRecordingTap (output-only unit), which
+// crashed the first live press ("pressing record crashes the app").
+// And why not mainMixerNode: it sits BEFORE the master FX inserts, so a
+// tap there would record something the user never heard.
 //
 // This taps the app's OWN output bus, never the microphone input, so
 // there is no mic permission and no feedback risk — the signal is
@@ -53,15 +54,22 @@ public final class OutputRecorder: ObservableObject {
     public var onAutoStop: ((URL?) -> Void)?
 
     /// Weak — the engine is owned by AudioEngine; the recorder only
-    /// borrows its outputNode to install a tap.
+    /// borrows a node to install a tap.
     private weak var engine: AVAudioEngine?
+    /// The node the tap installs on — AudioEngine.masterTapNode, resolved
+    /// lazily at start() so it reflects the master chain actually built.
+    private let tapNodeProvider: () -> AVAudioNode?
+    /// The node currently carrying our tap, so finish() removes the tap
+    /// from the SAME node even if the provider would resolve differently.
+    private weak var tappedNode: AVAudioNode?
     private var box: OutputWriterBox?
     private var currentURL: URL?
     private var startedAt: Date?
     private var elapsedTimer: Timer?
 
-    public init(engine: AVAudioEngine) {
+    public init(engine: AVAudioEngine, tapNode: @escaping () -> AVAudioNode?) {
         self.engine = engine
+        self.tapNodeProvider = tapNode
     }
 
     // MARK: - Control
@@ -74,8 +82,7 @@ public final class OutputRecorder: ObservableObject {
     public func start() -> Bool {
         guard state == .idle else { return false }
         guard let engine, engine.isRunning else { return false }
-
-        let node = engine.outputNode
+        guard let node = tapNodeProvider() else { return false }
         let format = node.outputFormat(forBus: 0)
         // A running engine whose output bus reports a 0 rate hasn't
         // fully negotiated its render format yet — refuse rather than
@@ -111,6 +118,7 @@ public final class OutputRecorder: ObservableObject {
             }
         }
 
+        self.tappedNode = node
         self.box = box
         self.currentURL = url
         self.startedAt = Date()
@@ -151,7 +159,8 @@ public final class OutputRecorder: ObservableObject {
         state = .idle
         peak = 0
 
-        engine?.outputNode.removeTap(onBus: 0)
+        tappedNode?.removeTap(onBus: 0)
+        tappedNode = nil
         let frames = box?.close() ?? 0
         box = nil
 

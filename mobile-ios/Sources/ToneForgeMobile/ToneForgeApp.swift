@@ -715,7 +715,9 @@ public final class AppState: ObservableObject {
 
     /// Records the master-bus output to an m4a. Lazy so it binds to the
     /// shared engine only once the engine exists.
-    public lazy var outputRecorder = OutputRecorder(engine: audioEngine.engine)
+    public lazy var outputRecorder = OutputRecorder(
+        engine: audioEngine.engine,
+        tapNode: { [weak self] in self?.audioEngine.masterTapNode })
     /// On-disk store for recorded audio takes (Documents/takes). Root
     /// injectable through the same override as the session store so
     /// tests stay hermetic.

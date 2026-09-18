@@ -142,6 +142,17 @@ public final class AudioEngine: ObservableObject {
     /// Independent of the user-shaped `masterComp` — catches summing overs.
     private var masterLimiter: AVAudioUnitEffect?
 
+    /// The last TAPPABLE node of the master chain — what feeds outputNode.
+    /// outputNode itself refuses recording taps (installTapOnBus throws an
+    /// NSException from AUGraphNodeBaseV3::CreateRecordingTap — it's an
+    /// output-only unit), which crashed the first session-audio capture.
+    /// Tapping the limiter (or the deepest built master node) captures the
+    /// identical signal: limiter → outputNode is a direct connection; only
+    /// the hardware SRC follows.
+    public var masterTapNode: AVAudioNode {
+        masterLimiter ?? masterComp ?? masterEQ ?? engine.mainMixerNode
+    }
+
     // Performance-FX insert (PERFORM_PARITY spec 1). Built in
     // buildMasterFXGraph, inserted between mainMixer and masterEQ:
     // mainMixer → perfInput → perfFilter → perfFlanger → perfThrow →

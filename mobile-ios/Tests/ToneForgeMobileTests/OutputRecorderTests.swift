@@ -77,13 +77,13 @@ final class OutputRecorderTests: XCTestCase {
         // A freshly-built engine is idle (isRunning == false); there's
         // nothing to capture, so start() is a no-op that reports failure
         // and leaves the recorder idle.
-        let recorder = OutputRecorder(engine: AVAudioEngine())
+        let recorder = OutputRecorder(engine: AVAudioEngine(), tapNode: { nil })
         XCTAssertFalse(recorder.start())
         XCTAssertEqual(recorder.state, .idle)
     }
 
     func testStopWhenIdleReturnsNil() {
-        let recorder = OutputRecorder(engine: AVAudioEngine())
+        let recorder = OutputRecorder(engine: AVAudioEngine(), tapNode: { nil })
         XCTAssertNil(recorder.stop())
         XCTAssertEqual(recorder.state, .idle)
     }
