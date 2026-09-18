@@ -8419,7 +8419,14 @@
   // Notes/Chords synth sounds ONLY when its own surface tab is the
   // explicitly selected one. `data-pad-surface` is stamped by the tab
   // switcher; absent (older markup) means the kit grid — i.e. samples.
+  //
+  // The Sequencer view counts as the samples surface too: it drives the
+  // SAME kit engine/pads, and the hardware surface (lp-hw.js) stays
+  // attached across the panel toggle (desktop: the sequencer sheet
+  // keeps the control surface + grid mirror alive).
   function _samplesSurfaceOwnsPress() {
+    const sq = document.getElementById('view-sequencer');
+    if (sq && sq.classList.contains('active')) return true;
     const v = document.getElementById('view-kit');
     if (!v || !v.classList.contains('active')) return false;
     return (v.dataset.padSurface || 'samples') === 'samples';
@@ -8436,6 +8443,15 @@
   // via _dispatchSurfaceEvent so it's source-agnostic.
   function _launchpadPushPress(evt) {
     if (!evt || !evt.meaning) return;
+    // Samples surface owns the press outright: no synth voice, no
+    // chord-verify ring entry, and no chop trigger either — the press
+    // IS a sample trigger and the kit already handles it (audio +
+    // telemetry). This gate must run BEFORE the chop branch: the driver
+    // mode can flip to contribute-sample while the Samples tab is up
+    // (persisted mode + a CC91-95 preset press, reachable purely from
+    // hardware), and routing the chop here on top of lp-hw's kit-pad
+    // dispatch DOUBLE-FIRED every note (kit pad + contribute chop).
+    if (_samplesSurfaceOwnsPress()) return;
     // Contribute mode presses carry a chop object instead of a chord
     // or note. Route them to the chop scheduler and skip the chord
     // verify ring buffer + pad synth entirely — the audible feedback
@@ -8452,11 +8468,6 @@
       }
       return;
     }
-    // Samples surface owns the press outright: no synth voice, no
-    // chord-verify ring entry — the press IS a sample trigger and the
-    // kit already handles it (audio + telemetry). See the predicate's
-    // comment; this holds regardless of what mode the driver is in.
-    if (_samplesSurfaceOwnsPress()) return;
     const now = performance.now();
     const buf = state.launchpad.lastPresses;
     const cutoff = now - 2000;
@@ -8662,6 +8673,10 @@
   // received is logged when it's not one of the known transport codes.
   const LP_CC_PLAY = 20;
   const LP_CC_STOP = 19;
+  // ○ Record / Capture MIDI (left column, row 1) — the D-036 global
+  // stop, shared with desktop so "stop" lives on the same physical
+  // button everywhere.
+  const LP_CC_GLOBAL_STOP = 10;
   // Right-side scene launch buttons (top-to-bottom: CC 89, 79, ..., 19).
   // In Contribute-Sample mode these become per-row loop launchers:
   //   CC 19..79 → toggle row 1..7 loop clip
@@ -8766,6 +8781,13 @@
     const { cc, value } = msg;
     // Value 0 is the release message; only act on press.
     if (value === 0) return;
+    // Samples/Sequencer surface active: lp-hw.js owns the FULL D-036
+    // function-button map (transport, mode select, loop-lock, 16/64,
+    // sequencer, groove, record, layers, stop-all, patterns, section
+    // jumps) via its own listener on the same port. Handling CCs here
+    // too would double-fire the transport and launch contribute row
+    // loops over the kit (the CC19/89/91-95 collisions).
+    if (_samplesSurfaceOwnsPress()) return;
     // Top-row preset switcher — ONLY active while the user is
     // already in contribute-sample mode. Outside Contribute, the
     // top-left ▲/▼ arrows get repurposed as an octave shifter for
@@ -8862,7 +8884,12 @@
       }
       return;
     }
-    if (cc === LP_CC_STOP) {
+    if (cc === LP_CC_STOP || cc === LP_CC_GLOBAL_STOP) {
+      // CC 10 (○ Record/Capture MIDI) is the D-036 global stop — the
+      // SAME button desktop uses, honored on every surface so the
+      // hardware semantics match cross-platform (parity rule 4). The
+      // legacy CC 19 stop stays for the panel surfaces where 19 isn't
+      // claimed by contribute row-1.
       try {
         if (state.isPlaying) pauseAll();
       } catch (e) {
@@ -9609,6 +9636,10 @@
   // (enable-checkbox gated), so the stage-panel workflows keep their
   // persisted mode.
   function _padSurfaceDriverMode() {
+    // Sequencer view = the samples surface with the pattern panel up
+    // (see _samplesSurfaceOwnsPress): lp-hw owns the device, driver off.
+    const sq = document.getElementById('view-sequencer');
+    if (sq && sq.classList.contains('active')) return 'off';
     const v = document.getElementById('view-kit');
     if (v && v.classList.contains('active')) {
       const s = _currentPadSurface();
@@ -16094,6 +16125,10 @@
         try { pauseAll(); } catch (_) {}
         try { window.JamnKit?.engine?.()?.stopAll?.(); } catch (_) {}
       },
+      // Section jumps (hardware scene buttons + the kit's section strip)
+      // ride the page's real seek path so loop regions / click scheduler /
+      // Connect mirror all re-anchor exactly like a transport scrub.
+      seek: t => { try { seekAll(t); } catch (_) {} },
     };
 
     // ------------------------------------------ Remix (one-tap transforms)
@@ -16214,6 +16249,17 @@
       openSequencer: padIdx => {
         showView('sequencer');
         try { window.JamnSequencer?.focusRow?.(padIdx); } catch (_) {}
+      },
+      // Hardware Session button (lp-hw.js, D-036 CC 93): the web
+      // "sequencer panel" is a view, so toggle = view flip between the
+      // pad grid and the pattern editor. isSequencerOpen feeds the LED.
+      toggleSequencer: () => {
+        const sq = document.getElementById('view-sequencer');
+        showView(sq && sq.classList.contains('active') ? 'kit' : 'sequencer');
+      },
+      isSequencerOpen: () => {
+        const sq = document.getElementById('view-sequencer');
+        return !!(sq && sq.classList.contains('active'));
       },
     };
 
@@ -16517,6 +16563,15 @@
         // surface is up — re-apply it (mode + pane visibility + mirror
         // repaint) now that #view-kit is the active view.
         try { _selectPadSurface(_currentPadSurface()); } catch (_) {}
+      } else if (name === 'sequencer') {
+        // The Sequencer drives the SAME kit engine, and on hardware it's
+        // a PANEL over the pad surface (desktop Session button, D-036
+        // CC 93): keep lp-hw attached so the grid mirror + function
+        // buttons (pattern select, sequencer play/stop, Session-to-close)
+        // stay live, and keep the driver off so its mode painter can't
+        // fight the mirror.
+        try { window.JamnLpHW?.attach?.().catch(() => {}); } catch (_) {}
+        try { _applyPadSurfaceDriverMode(); } catch (_) {}
       } else {
         // Leaving the Launchpad surface: stop the kit's hardware LED
         // mirror. Its tick kept repainting the kit grid over whatever the

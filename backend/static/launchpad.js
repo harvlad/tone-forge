@@ -864,22 +864,16 @@
   // current shipping firmware. If a physical press logs a different
   // CC/note than the value below, the console.log in _onMidi surfaces
   // it and this constant is a one-line adjust.
-  // Novation's docs are inconsistent across MK3 firmware revisions and
-  // the button that fires the "Play" CC/note varies. Instead of guessing
-  // a single value we paint every likely candidate simultaneously — the
-  // real Play button will illuminate, unused candidates address dead
-  // slots and are ignored silently. After confirmation, trim to the one.
-  //
-  // Candidates cover both CC-based (right column / transport row) and
-  // Note-based (top row / bottom row) addressing schemes reported by
-  // MK3 community references.
+  // CONFIRMED on hardware (desktop D-036 map, User Guide p.11 × the
+  // Programmer-mode CC scheme): the physical ▷ Play button is CC 20.
+  // This used to spray six candidate indices (19/20/91/93/98/108)
+  // because early firmware notes were inconsistent — but 19, 91, 93
+  // and 98 are REAL buttons with other assignments (scene row-1 /
+  // ◄ 16-grid / Session / Projects on the D-036 function map), so the
+  // spray stomped their state LEDs and fought the contribute top-row
+  // painter. One button, one meaning.
   const TRANSPORT_PLAY_CANDIDATES = [
-    19,   // bottom-right round scene-launch button (my original guess)
-    20,   // LP Pro (MK2) transport CC — sometimes reused on MK3
-    91,   // top-left Session/User row
-    98,   // top-right Session/User row
-    108,  // dedicated transport note on some firmware
-    93,   // top row middle (Session button on MK3)
+    20,   // ▷ Play (left column, row 2) — the D-036 transport toggle
   ];
   let _lastPlayingState = null;    // null = never painted, false = dim, true = bright
 
@@ -1826,8 +1820,15 @@
   }
 
   function _isLaunchpadPort(port) {
-    const n = (port && (port.name || '')) + '';
-    return n.includes('Launchpad');
+    // MUST be the same family-fragment matcher the grid binder uses
+    // (desktop 8e56570c synth-leak class): the old case-sensitive
+    // 'Launchpad' literal missed ports that only carry the 'LPProMK3'
+    // fragment (Windows-style enumeration, e.g. "MIDIIN2 (LPProMK3
+    // MIDI)"), so the LP's non-bound interfaces got attached as generic
+    // MIDI-Learn inputs — from there, with the keyboard-synth opt-in
+    // on, unmapped LP notes reached the note synth (and the clock-out
+    // exclusion leaked ticks back at the device).
+    return _matchesLaunchpad(port);
   }
 
   function _onGenericMidi(evt) {

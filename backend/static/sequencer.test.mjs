@@ -199,4 +199,21 @@ assert.deepEqual(STEP_COUNTS, [16, 32]);
 S.mount(null, null); // must not throw
 S.unmount(); // nothing mounted → must not throw
 
+// ---------- hardware seam (lp-hw.js, D-036 CC 89 + 101-108) ----------
+// Playback is owned by the mounted surface, so with the pane closed
+// every hw call is a safe no-op and the state reads report "dark".
+assert.equal(S.hw.isMounted(), false);
+assert.equal(S.hw.isPlaying(), false);
+assert.equal(S.hw.slotInfo(), null);
+assert.equal(S.hw.selectSlot(0), false);
+S.hw.togglePlay(); // must not throw
+
+// slotHasContent: only an audible step (> 0) counts — all-zero rows
+// left behind by toggling steps off are NOT content.
+const { slotHasContent } = S._internals;
+assert.equal(slotHasContent(null), false);
+assert.equal(slotHasContent({ rows: {} }), false);
+assert.equal(slotHasContent({ rows: { 3: [0, 0, 0, 0] } }), false);
+assert.equal(slotHasContent({ rows: { 3: [0, 1, 0, 0] } }), true);
+
 console.log("sequencer.test.mjs: all assertions passed");

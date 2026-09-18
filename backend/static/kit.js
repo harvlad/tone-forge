@@ -1349,13 +1349,21 @@
     } catch (_) {}
   }
 
-  /** Kill All: silence every engine voice, reset pad UI, and ask the host
-   * to stop song playback too (host absent → engine-only, still useful). */
-  function killAll(s) {
+  /** Stop every pad voice + reset pad UI — pads ONLY, the song keeps
+   * rolling (the D-036 Stop Clip semantic; CC 10 / Kill All is the
+   * everything-stop). Armed pads reset too: the engine drops their
+   * pending launches but the UI would otherwise pulse forever. */
+  function stopAllPads(s) {
     try {
       if (can(s.engine, "stopAll")) s.engine.stopAll();
     } catch (_) {}
     for (var i = 0; i < s.padEls.length; i++) if (s.padEls[i]) setUi(s, i, "idle");
+  }
+
+  /** Kill All: silence every engine voice, reset pad UI, and ask the host
+   * to stop song playback too (host absent → engine-only, still useful). */
+  function killAll(s) {
+    stopAllPads(s);
     var host = getHost();
     try {
       if (can(host, "killAll")) host.killAll();
@@ -1426,6 +1434,16 @@
         t.textContent = b.label;
         seg.appendChild(t);
         seg.title = b.label + " · " + fmtTime(b.start) + "–" + fmtTime(b.end);
+        // Section blocks are clickable: jump the song to the block start
+        // (desktop 96171316 made its strip clickable to match the scene
+        // buttons; the hardware section CCs ride the same host seek).
+        seg.style.cursor = "pointer";
+        seg.addEventListener("click", function () {
+          var host = getHost();
+          try {
+            if (can(host, "seek")) host.seek(b.start);
+          } catch (_) {}
+        });
         strip.appendChild(seg);
         segEls.push(seg);
       });
@@ -5339,6 +5357,100 @@
     drawPadWave: function (canvas, padIdx, tint, binsOpt) {
       if (!current || !canvas) return false;
       return drawWaveInto(current, padIdx, canvas, resolveTint(tint), binsOpt || 0);
+    },
+    // Hardware control surface (lp-hw.js, desktop D-036 function-button
+    // parity): the kit-side actions + state reads the MK3's function
+    // buttons drive. Every entry no-ops safely with no mounted kit so
+    // the hardware layer never has to sequence against mount timing.
+    hw: {
+      /** Current trigger mode ("one" | "follow" | "latch"), or null. */
+      triggerMode: function () { return current ? current.mode : null; },
+      /** CC 30/40/50 — One-Shot | Follow | Latch select. */
+      setTriggerMode: function (m) {
+        if (current && (m === "one" || m === "follow" || m === "latch")) {
+          setMode(current, m);
+        }
+      },
+      /** Current grid size (16 | 64), or null. */
+      padCount: function () { return current ? current.padCount : null; },
+      /** CC 91/92 — the on-screen SIZE control incl. borrow-relayout
+       * semantics (setPadCount reloads/re-arranges exactly like the
+       * screen toggle). */
+      setPadCount: function (n) {
+        if (current && (n === 16 || n === 64)) setPadCount(current, n);
+      },
+      /** CC 95 Chord — Instant Groove. Returns false (no flash) on an
+       * empty grid: the on-screen button is disabled there, and the
+       * unguarded call would still latch the trigger mode with nothing
+       * to play (the exact desktop guard). */
+      instantGroove: function () {
+        var s = current;
+        if (!s || !can(s.engine, "trigger")) return false;
+        if (!pickInstantGroove(s.pads).length) return false;
+        try {
+          if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+        } catch (_) {}
+        instantGroove(s);
+        return true;
+      },
+      /** CC 8 Stop Clip — stop every sounding pad; the song keeps
+       * playing (CC 10 is the everything-stop). */
+      stopAllPads: function () {
+        if (current) stopAllPads(current);
+      },
+      /** CC 2–7 — per-category layer toggles (desktop layerRow order:
+       * DRUMS, BASS, CHORDS, SYNTH, LEAD, TEXTURE). */
+      toggleLayer: function (cat) {
+        var s = current;
+        if (!s) return;
+        try {
+          if (s.ctx && s.ctx.state === "suspended") s.ctx.resume().catch(function () {});
+        } catch (_) {}
+        toggleLayer(s, cat);
+      },
+      /** Layer LED state: { present, active, color:{r,g,b 0..255} },
+       * or null with no kit mounted. */
+      layerInfo: function (cat) {
+        var s = current;
+        if (!s) return null;
+        var members = padsInCategory(s.pads, cat);
+        if (!members.length) return { present: false, active: false, color: null };
+        return {
+          present: true,
+          active: activeLayerIdx(s, cat) != null,
+          color: parseColor(members[0].colorHint),
+        };
+      },
+      /** Section-strip LED state: { count, active } (active = block
+       * under the playhead, -1 when the transport time is unknown). */
+      sectionInfo: function () {
+        var s = current;
+        if (!s || !s.arr || !s.arr.blocks.length) return { count: 0, active: -1 };
+        var host = getHost();
+        var t = NaN;
+        try {
+          t = can(host, "getTime") ? Number(host.getTime()) : NaN;
+        } catch (_) {}
+        return {
+          count: s.arr.blocks.length,
+          active: isFinite(t) ? blockIndexAtTime(s.arr.blocks, t) : -1,
+        };
+      },
+      /** CC 79…19 — jump the song to section block i (the same host
+       * seek the on-screen strip click uses). Returns false when the
+       * block doesn't exist or the host can't seek. */
+      sectionJump: function (i) {
+        var s = current;
+        if (!s || !s.arr || !s.arr.blocks[i]) return false;
+        var host = getHost();
+        try {
+          if (can(host, "seek")) {
+            host.seek(s.arr.blocks[i].start);
+            return true;
+          }
+        } catch (_) {}
+        return false;
+      },
     },
     // Pure helpers exposed for the DOM-free smoke test only.
     _internals: {

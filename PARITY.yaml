@@ -252,8 +252,9 @@ features:
     name: "Launchpad Pro MK3 function-button map — the buttons AROUND the grid drive the session (transport, trigger mode, loop lock, grid size, record, stop-clip, section jump, layer toggles, sequencer panel/play/pattern select) with state LEDs"
     platforms:
       web:
-        status: missing
-        note: "lp-hw.js drives grid notes + LED mirror only; no control-CC handling beyond mode plumbing. Queued for the hardware-integration parity audit — the desktop assignment table (jam-desktop DECISIONS D-036) is the spec to port."
+        status: partial
+        evidence: "backend/static/lp-hw.js#ccFunction"
+        note: "Full D-036 map ported into lp-hw.js while the Samples/Sequencer surface owns the device (jam.js CC handler defers there): CC20/10 transport via JamnKitHost; 30/40/50 mode select; 60 loop-lock = shared quantize off↔last grid; 91/92 = kit setPadCount 16/64; 93 Session toggles the Sequencer VIEW; 95 Groove (empty-grid inert, amber flash); 1 take record (JamnRecordings.toggleRecord, red pulse — web recorder has no distinct armed stage); 2-7 layer toggles (kit hw.toggleLayer, category-accent LEDs); 8 stop-all-pads (amber flash); 101-108 pattern select + 89 sequencer play/stop (4 slots A-D, act only while the sequencer pane is mounted — no headless clock on web); 79-19 section jumps via new JamnKitHost.seek (strip made clickable to match). Control LEDs: separate cache/blank domain (CTL_CCS), reconnect repaint, software pulse; CC20 LED stays with the driver's play painter (spray trimmed to the confirmed CC20). Receive-thread fast press is a browser ceiling (WebMIDI = main thread) — na, not fixable. Pinned by lp-hw.test.mjs."
       ios:
         status: missing
         note: "USBLaunchpadTransport forwards onControlButton but nothing consumes it. Queued for the hardware-integration parity audit (D-036 table is the spec); Core surface is shareable via ToneForgeEngine if lifted."

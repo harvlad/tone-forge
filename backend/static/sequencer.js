@@ -755,14 +755,59 @@
     }, 1600);
   }
 
+  /** Any active step in any row? (In-memory rows can hold all-zero
+   * arrays after toggling steps off — content means an audible step.) */
+  function slotHasContent(p) {
+    if (!p || !p.rows) return false;
+    for (var key in p.rows) {
+      if (!Object.prototype.hasOwnProperty.call(p.rows, key)) continue;
+      var steps = p.rows[key];
+      for (var i = 0; i < steps.length; i++) if (steps[i] > 0) return true;
+    }
+    return false;
+  }
+
   window.JamnSequencer = {
     mount: mount,
     unmount: unmount,
     focusRow: focusRow,
+    // Hardware control surface (lp-hw.js, desktop D-036 parity):
+    // CC 89 sequencer play/stop + CC 101-108 pattern select. Playback
+    // is owned by the MOUNTED surface (web has no headless sequencer
+    // clock), so everything here no-ops while the pane is closed — the
+    // LEDs go dark then too, which is honest: the buttons can't act.
+    hw: {
+      isMounted: function () { return !!current; },
+      isPlaying: function () { return !!(current && current.playing); },
+      togglePlay: function () {
+        if (current) togglePlay(current);
+      },
+      /** Select slot i (0-based; web has 4 slots A–D — desktop's
+       * 8-pattern guard analog: out-of-range is a no-op). */
+      selectSlot: function (i) {
+        if (!current) return false;
+        var id = SLOT_IDS[i];
+        if (!id) return false;
+        selectSlot(current, id);
+        return true;
+      },
+      /** Per-slot LED state, or null while unmounted. */
+      slotInfo: function () {
+        if (!current) return null;
+        return SLOT_IDS.map(function (id) {
+          return {
+            id: id,
+            hasContent: slotHasContent(current.store.slots[id]),
+            active: current.store.activeSlot === id,
+          };
+        });
+      },
+    },
     // Remix hooks (remix.js Humanize toggle; kit.js Flip activation).
     setGrooveOffsets: setGrooveOffsets,
     stageDefaultSequence: stageDefaultSequence,
     _internals: {
+      slotHasContent: slotHasContent,
       stepDurationSec: stepDurationSec,
       stepTimeSec: stepTimeSec,
       nextLockAlignedStart: nextLockAlignedStart,

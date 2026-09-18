@@ -4,6 +4,13 @@
  * the on-screen kit grid and routes hardware pad presses into the SAME
  * trigger path as an on-screen tap.
  *
+ * It ALSO owns the MK3's FUNCTION BUTTONS while this surface is up —
+ * the full desktop D-036 assignment (transport, One-Shot/Follow/Latch
+ * select, loop-lock, 16/64 arrows, Session=sequencer panel,
+ * Chord=Instant Groove, Record Arm, layer mutes, Stop Clip, pattern
+ * select, sequencer play/stop, section jumps) with state LEDs on a
+ * separate cache/blank path. See the "function buttons" section below.
+ *
  * History: this file used to mirror the standalone lpview.js chop grid
  * (window.JamnLaunchpad, #view-launchpad) as a fixed 8×8; a separate
  * kit-hw.js did a partial bottom-left 4×4 mirror of the Jam Pads kit.
@@ -81,14 +88,20 @@
     return !!(d && typeof d.isConnected === "function" && d.isConnected());
   }
 
-  /** The kit grid owns hardware presses + LEDs only while the merged pad
-   * surface is the active view AND showing its SAMPLES tab. jam.js stamps
-   * the active tab as data-pad-surface on #view-kit (absent = legacy
-   * markup = samples). On the Notes/Chords tabs the driver
-   * (window.Launchpad) owns the device: its mode paints the grid and its
-   * own _onMidi turns presses into synth voices — routing those presses
-   * into kit pads here would re-create the loop+synth double-fire. */
+  /** The kit grid owns hardware presses + LEDs while the merged pad
+   * surface is the active view AND showing its SAMPLES tab, OR while
+   * the Sequencer view is up (it drives the SAME kit engine — on
+   * hardware the sequencer is a PANEL over the pad surface, desktop
+   * Session button, so the mirror + function buttons stay live across
+   * the toggle). jam.js stamps the active tab as data-pad-surface on
+   * #view-kit (absent = legacy markup = samples). On the Notes/Chords
+   * tabs the driver (window.Launchpad) owns the device: its mode paints
+   * the grid and its own _onMidi turns presses into synth voices —
+   * routing those presses into kit pads here would re-create the
+   * loop+synth double-fire. */
   function samplesGridActive() {
+    var sq = document.getElementById("view-sequencer");
+    if (sq && sq.classList.contains("active")) return true;
     var v = document.getElementById("view-kit");
     if (!v || !v.classList.contains("active")) return false;
     return (v.getAttribute("data-pad-surface") || "samples") === "samples";
@@ -141,6 +154,367 @@
     var row = 7 - rc.row, col = rc.col;
     if (row < 0 || row >= cols || col < 0 || col >= cols) return -1;
     return row * cols + col;
+  }
+
+  // ---------- function buttons (desktop D-036 map, web port) ----------
+  //
+  // Every round button the MK3 puts around the 8×8 grid, mapped to the
+  // SAME assignment desktop pinned in LaunchpadControlSurface (D-036) —
+  // parity rule 4: identical semantics on identical buttons. Actions
+  // fire on press only (value > 0); Shift (90) stays reserved, ▲▼
+  // (80/70) stay with jam.js's octave painter off this surface and are
+  // deliberately unmapped here (desktop: unmapped/off), Setup/logo
+  // untouched, tap tempo parked.
+  //
+  // LEDs ride a path SEPARATE from the grid mirror: their own cache
+  // (S.ctlCache, keyed by CC), their own blanking list (CTL_CCS), and a
+  // repaint from scratch on every reconnect edge — the web analogue of
+  // desktop's ControlButtonLightTransport controlLedCache. CC 20's LED
+  // is NOT painted here: the driver's own play-button painter
+  // (launchpad.js _paintPlayButton, cache + reconnect repaint) already
+  // owns that address; two painters on one LED flicker.
+
+  /** CC 2–7 in track-control order — desktop layerRow truncated to the
+   * six free cells (Record Arm + Stop Clip bookend the row). */
+  var LAYER_ROW = ["DRUMS", "BASS", "CHORDS", "SYNTH", "LEAD", "TEXTURE"];
+
+  /** Momentary press-flash duration (Stop Clip / Chord), desktop
+   * flashDuration. */
+  var FLASH_MS = 180;
+
+  /** Every CC this module may paint — the blanking + cache domain.
+   * Excludes 20 (driver's play LED), 70/80 (jam.js octave arrows),
+   * 90 (Shift reserved) and 94/96–98 (unmapped, never addressed). */
+  var CTL_CCS = [
+    1, 2, 3, 4, 5, 6, 7, 8,           // track control row
+    10, 30, 40, 50, 60,               // left column (minus ▷ 20)
+    91, 92, 93, 95,                   // top row
+    19, 29, 39, 49, 59, 69, 79, 89,   // scene column
+    101, 102, 103, 104, 105, 106, 107, 108, // track select
+  ];
+
+  // Palette: desktop LaunchpadControlSurface.Color hex values halved
+  // into the driver's 0..127 SysEx range (same channel scaling the
+  // grid mirror uses), so both platforms light the same colors.
+  var CTL = {
+    bright:   { r: 127, g: 127, b: 127 },
+    dim:      { r: 15, g: 15, b: 15 },
+    green:    { r: 0, g: 127, b: 0 },
+    greenDim: { r: 5, g: 20, b: 5 },
+    red:      { r: 127, g: 0, b: 0 },
+    redDim:   { r: 32, g: 4, b: 4 },
+    amber:    { r: 127, g: 95, b: 0 },
+    amberDim: { r: 25, g: 17, b: 5 },
+    lockOn:   { r: 122, g: 79, b: 5 },  // 0xF59E0B — the quantize accent
+    lockDim:  { r: 30, g: 19, b: 1 },
+    section:  { r: 32, g: 32, b: 32 },
+    pattern:  { r: 16, g: 16, b: 16 },
+    off:      { r: 0, g: 0, b: 0 },
+  };
+
+  /** Scale a 0..127 color by k (software pulse — paintButton is
+   * static-only, so pulsing LEDs breathe at the LED tick like the
+   * armed-pad pulse). */
+  function ctlScaled(c, k) {
+    return {
+      r: Math.max(0, Math.min(127, Math.round(c.r * k))),
+      g: Math.max(0, Math.min(127, Math.round(c.g * k))),
+      b: Math.max(0, Math.min(127, Math.round(c.b * k))),
+    };
+  }
+
+  /**
+   * The D-036 assignment table as a pure CC → function map (the web
+   * twin of LaunchpadControlSurface.function(for:)). Returns null for
+   * reserved/unmapped buttons. Exposed via _internals for the node
+   * suite — this IS the contract the desktop tests pin.
+   */
+  function ccFunction(cc) {
+    if (cc === 20) return { kind: "playPause" };
+    if (cc === 10) return { kind: "globalStop" };
+    if (cc === 30) return { kind: "selectMode", mode: "one" };
+    if (cc === 40) return { kind: "selectMode", mode: "follow" };
+    if (cc === 50) return { kind: "selectMode", mode: "latch" };
+    if (cc === 60) return { kind: "loopLockToggle" };
+    if (cc === 91) return { kind: "gridSize", count: 16 };
+    if (cc === 92) return { kind: "gridSize", count: 64 };
+    if (cc === 93) return { kind: "sequencerPanelToggle" };
+    if (cc === 95) return { kind: "instantGroove" };
+    if (cc === 1) return { kind: "recordToggle" };
+    if (cc === 8) return { kind: "stopAllPads" };
+    if (cc >= 2 && cc <= 7) return { kind: "layerToggle", category: LAYER_ROW[cc - 2] };
+    if (cc >= 101 && cc <= 108) return { kind: "patternSelect", index: cc - 101 };
+    if (cc === 89) return { kind: "sequencerPlayStop" };
+    if (cc >= 19 && cc <= 79 && cc % 10 === 9) {
+      // Scene buttons top→bottom = song order: CC 79 (under 89) is
+      // block 0, CC 19 (bottom) is block 6.
+      return { kind: "sectionJump", index: 7 - Math.floor(cc / 10) };
+    }
+    return null; // 90 Shift reserved; 70/80, 94, 96–98 free; tap tempo parked
+  }
+
+  /**
+   * Pure LED frame for the function buttons (the web twin of
+   * controlLightFrame). `st` is a plain state snapshot (see
+   * collectControlState); `pulseK` is the shared soft-pulse factor.
+   * Returns {cc: {r,g,b 0..127}} for every CTL_CCS address — absent
+   * keys mean off. CC 20 is deliberately not emitted (driver-owned).
+   */
+  function controlFrame(st, pulseK) {
+    var k = typeof pulseK === "number" ? pulseK : 1;
+    var f = {};
+
+    // ○ Record/Capture MIDI = global stop: always-available dim red.
+    f[10] = CTL.redDim;
+
+    // Trigger-mode select: selected lit, others dim.
+    f[30] = st.mode === "one" ? CTL.bright : CTL.dim;
+    f[40] = st.mode === "follow" ? CTL.bright : CTL.dim;
+    f[50] = st.mode === "latch" ? CTL.bright : CTL.dim;
+
+    // Loop lock (web: the shared quantize setting != off).
+    f[60] = st.loopLocked ? CTL.lockOn : CTL.lockDim;
+
+    // Grid size arrows (◄ 16, ► 64).
+    f[91] = st.padCount === 16 ? CTL.bright : CTL.dim;
+    f[92] = st.padCount === 64 ? CTL.bright : CTL.dim;
+
+    // Session = sequencer panel; Chord = Instant Groove (press flash).
+    f[93] = st.seqOpen ? CTL.bright : CTL.dim;
+    f[95] = st.flash95 ? CTL.amber : CTL.amberDim;
+
+    // Record Arm: red pulse while recording, dim red idle. (Web's
+    // recorder is one-tap arm+start — no distinct "armed" stage.)
+    f[1] = st.recording ? ctlScaled(CTL.red, k) : CTL.redDim;
+
+    // Stop Clip: amber flash on press, else dim amber.
+    f[8] = st.flash8 ? CTL.amber : CTL.amberDim;
+
+    // Layer toggles: sounding layer pulses its category accent,
+    // available-but-silent dim, empty dark.
+    for (var i = 0; i < LAYER_ROW.length; i++) {
+      var cc = i + 2;
+      var info = st.layers && st.layers[i];
+      if (!info || !info.present || !info.color) {
+        f[cc] = CTL.off;
+        continue;
+      }
+      // colorHint is 0..255; halve into SysEx range like the grid.
+      var accent = { r: info.color.r >> 1, g: info.color.g >> 1, b: info.color.b >> 1 };
+      f[cc] = info.active
+        ? ctlScaled(accent, k)
+        : { r: accent.r >> 2, g: accent.g >> 2, b: accent.b >> 2 };
+    }
+
+    // Pattern select: stored slot dim, the active one bright (pulsing
+    // while the sequencer runs). Slots null = pane closed = dark (the
+    // buttons can't act then — see the hw namespace note).
+    for (var slot = 0; slot < 8; slot++) {
+      var pcc = 101 + slot;
+      var s = st.slots && st.slots[slot];
+      if (!s) { f[pcc] = CTL.off; continue; }
+      if (s.active) {
+        f[pcc] = st.seqPlaying ? ctlScaled(CTL.bright, k) : CTL.bright;
+      } else {
+        f[pcc] = s.hasContent ? CTL.pattern : CTL.off;
+      }
+    }
+
+    // Sequencer play/stop (top scene arrow).
+    f[89] = st.seqPlaying ? ctlScaled(CTL.green, k) : CTL.greenDim;
+
+    // Section blocks: lit where a block exists, pulse on the block
+    // under the playhead.
+    for (var b = 0; b < 7; b++) {
+      var scc = (7 - b) * 10 + 9;
+      if (!st.sections || b >= st.sections.count) {
+        f[scc] = CTL.off;
+      } else {
+        f[scc] = st.sections.active === b ? ctlScaled(CTL.bright, k) : CTL.section;
+      }
+    }
+
+    return f;
+  }
+
+  /** Live state snapshot for controlFrame. Every read is feature-
+   * checked — a missing module reads as its dark/neutral state. */
+  function collectControlState() {
+    var hwk = window.JamnKit && window.JamnKit.hw;
+    var seq = window.JamnSequencer && window.JamnSequencer.hw;
+    var hooks = window.JamnKitHooks;
+    var now = Date.now();
+    var layers = [];
+    for (var i = 0; i < LAYER_ROW.length; i++) {
+      var info = null;
+      try { info = hwk && hwk.layerInfo ? hwk.layerInfo(LAYER_ROW[i]) : null; } catch (_) {}
+      layers.push(info);
+    }
+    var recording = false;
+    try {
+      recording = !!(window.JamnRecordings && window.JamnRecordings.isRecording
+        && window.JamnRecordings.isRecording());
+    } catch (_) {}
+    var sections = { count: 0, active: -1 };
+    try { if (hwk && hwk.sectionInfo) sections = hwk.sectionInfo(); } catch (_) {}
+    var loopLocked = false;
+    try {
+      loopLocked = !!(window.JamnQuantize
+        && typeof window.JamnQuantize.get === "function"
+        && window.JamnQuantize.get() !== "off");
+    } catch (_) {}
+    return {
+      mode: hwk && hwk.triggerMode ? hwk.triggerMode() : null,
+      loopLocked: loopLocked,
+      padCount: hwk && hwk.padCount ? hwk.padCount() : null,
+      seqOpen: !!(hooks && typeof hooks.isSequencerOpen === "function"
+        && hooks.isSequencerOpen()),
+      seqPlaying: !!(seq && seq.isPlaying && seq.isPlaying()),
+      slots: seq && seq.slotInfo ? seq.slotInfo() : null,
+      recording: recording,
+      layers: layers,
+      sections: sections,
+      flash8: (S.flashUntil[8] || 0) > now,
+      flash95: (S.flashUntil[95] || 0) > now,
+    };
+  }
+
+  function flash(cc) {
+    if (S) S.flashUntil[cc] = Date.now() + FLASH_MS;
+  }
+
+  /** Toggle the shared quantize between off and the last musical grid
+   * (default bar) — the web reading of desktop loopLockEnabled. Going
+   * through JamnQuantize keeps the kit's segmented control (and any
+   * other subscriber) in lockstep for free. */
+  function toggleLoopLock() {
+    var q = window.JamnQuantize;
+    if (!q || typeof q.get !== "function" || typeof q.set !== "function") return;
+    var cur = q.get();
+    if (cur === "off") {
+      q.set((S && S.lastQuant) || "bar");
+    } else {
+      if (S) S.lastQuant = cur; // re-lock restores the SAME grid unit
+      q.set("off");
+    }
+  }
+
+  /** Dispatch one function-button press (the impure half of ccFunction,
+   * mirroring LaunchpadControlSurface.handle). Wholly fenced: a host
+   * fault must never break the MIDI stream or the grid mirror. */
+  function handleCc(cc, value) {
+    if (!S || !(value > 0)) return;    // press only; releases ignored
+    if (!samplesGridActive()) return;  // off-surface: driver/jam.js own CCs
+    var fn = ccFunction(cc);
+    if (!fn) return;
+    var hw = window.JamnKit && window.JamnKit.hw;
+    var host = window.JamnKitHost || null;
+    var hooks = window.JamnKitHooks || null;
+    var seq = window.JamnSequencer && window.JamnSequencer.hw;
+    try {
+      switch (fn.kind) {
+        case "playPause":
+          if (host && typeof host.isPlaying === "function" && host.isPlaying()) {
+            if (host.pauseSong) host.pauseSong();
+          } else if (host && host.playSong) {
+            host.playSong();
+          }
+          break;
+        case "globalStop":
+          // The everything-stop: pads, song AND sequencer (CC 8 is the
+          // pads-only one; desktop twin is stopEverything()). The
+          // sequencer clock must stop too, or the running pattern
+          // re-triggers pads one step after they were silenced.
+          if (hw) hw.stopAllPads();
+          if (host && host.pauseSong) host.pauseSong();
+          if (seq && typeof seq.isPlaying === "function" && seq.isPlaying()) {
+            seq.togglePlay();
+          }
+          break;
+        case "selectMode":
+          if (hw) hw.setTriggerMode(fn.mode);
+          break;
+        case "loopLockToggle":
+          toggleLoopLock();
+          break;
+        case "gridSize":
+          if (hw) hw.setPadCount(fn.count);
+          break;
+        case "sequencerPanelToggle":
+          if (hooks && typeof hooks.toggleSequencer === "function") hooks.toggleSequencer();
+          break;
+        case "instantGroove":
+          // Inert on an empty grid — no groove, no flash (desktop guard).
+          if (hw && hw.instantGroove()) flash(95);
+          break;
+        case "recordToggle":
+          if (window.JamnRecordings
+              && typeof window.JamnRecordings.toggleRecord === "function") {
+            window.JamnRecordings.toggleRecord();
+          }
+          break;
+        case "stopAllPads":
+          if (hw) { hw.stopAllPads(); flash(8); }
+          break;
+        case "layerToggle":
+          if (hw) hw.toggleLayer(fn.category);
+          break;
+        case "patternSelect":
+          if (seq) seq.selectSlot(fn.index);
+          break;
+        case "sequencerPlayStop":
+          if (seq) seq.togglePlay();
+          break;
+        case "sectionJump":
+          if (hw) hw.sectionJump(fn.index);
+          break;
+      }
+    } catch (_) { /* fenced: see docstring */ }
+    paintControls(); // press feedback lands NOW, not at the next tick
+  }
+
+  /** Paint the function-button LEDs, diffed against their own cache
+   * (grid mirror untouched — separate path, separate cache). */
+  function paintControls() {
+    if (!S) return;
+    var d = lp();
+    if (!d || !driverConnected() || !samplesGridActive()) return;
+    var st;
+    try { st = collectControlState(); } catch (_) { return; }
+    var ph = (Date.now() % PULSE_PERIOD_MS) / PULSE_PERIOD_MS;
+    var pulseK = 0.55 + 0.3 * Math.sin(ph * 2 * Math.PI);
+    var frame = controlFrame(st, pulseK);
+    for (var i = 0; i < CTL_CCS.length; i++) {
+      var cc = CTL_CCS[i];
+      var rgb = frame[cc] || CTL.off;
+      var cache = S.ctlCache[cc];
+      if (cache && cache.r === rgb.r && cache.g === rgb.g && cache.b === rgb.b) continue;
+      S.ctlCache[cc] = rgb;
+      try {
+        if (rgb.r || rgb.g || rgb.b) d.paintButton(cc, rgb.r, rgb.g, rgb.b);
+        else d.blankButton(cc);
+      } catch (_) {}
+    }
+  }
+
+  /** True when any function LED is cached as painted. */
+  function ctlPainted() {
+    if (!S) return false;
+    for (var k in S.ctlCache) {
+      if (Object.prototype.hasOwnProperty.call(S.ctlCache, k)) return true;
+    }
+    return false;
+  }
+
+  /** Blank every function LED this module may have painted and drop
+   * the cache (standdown / reconnect / teardown edges). */
+  function blankControls() {
+    var d = lp();
+    if (!d || !driverConnected()) return;
+    for (var i = 0; i < CTL_CCS.length; i++) {
+      try { d.blankButton(CTL_CCS[i]); } catch (_) {}
+    }
+    if (S) S.ctlCache = {};
   }
 
   // ---------- LED mirroring ----------
@@ -197,8 +571,10 @@
     var connected = driverConnected();
     if (connected && !S.wasConnected) {
       // Hot-plug (the driver re-bound via its own statechange handler):
-      // drop the cache so the whole grid repaints from scratch.
+      // drop BOTH caches so the grid AND the function LEDs repaint from
+      // scratch (the reconnect-repaint half of the control-LED contract).
       S.ledCache = [];
+      S.ctlCache = {};
       S.lastCols = 0;
     }
     S.wasConnected = connected;
@@ -212,8 +588,9 @@
       // the driver painted with nothing left to repaint it. Connected is
       // already true here (checked above), so blankAll really clears the
       // cache and this edge fires exactly once per standdown.
-      if (S.ledCache.length) {
+      if (S.ledCache.length || ctlPainted()) {
         blankAll();
+        blankControls();
         var dd = lp();
         if (dd && typeof dd.repaint === "function") {
           try { dd.repaint(); } catch (_) {}
@@ -250,6 +627,11 @@
       paintPad(i, cols, rgb);
     }
 
+    // Function-button LEDs: separate path + cache, same tick cadence
+    // (the tick doubles as the soft-pulse clock for record/layers/
+    // sections, exactly like the armed-pad pulse above).
+    paintControls();
+
     // The engine is recreated on every kit.js remount — re-push the Link
     // transport whenever the identity changes so a fresh engine doesn't
     // silently lose bar alignment.
@@ -281,6 +663,13 @@
     var data = evt.data;
     if (!data || data.length < 2) return;
     var status = data[0] & 0xf0;
+    if (status === 0xb0) {
+      // Function-button CCs (D-036 map). Branches BEFORE the note path
+      // so the audible press chain stays exactly as audited — zero
+      // added work between Note On and engine.trigger.
+      handleCc(data[1] | 0, data[2] | 0);
+      return;
+    }
     var isOn = status === 0x90 && (data[2] || 0) > 0;
     var isOff = status === 0x80 || (status === 0x90 && (data[2] || 0) === 0);
     if (!isOn && !isOff) return;
@@ -397,6 +786,9 @@
       onMidi: onMidi,
       onStateChange: null,
       ledCache: [],
+      ctlCache: {},   // function-button LEDs — own cache, own blank list
+      flashUntil: {}, // cc → epoch-ms end of a momentary press flash
+      lastQuant: "bar", // loop-lock re-arm target (last non-off grid)
       wasConnected: false,
       lastCols: 0,
       lastEngine: null,
@@ -425,7 +817,10 @@
     // lingers on the hardware into the NEXT session ("those pads were already
     // lit before I got to web"). pagehide fires on close/navigate/bfcache;
     // the synchronous blank SysEx flushes before teardown. best-effort.
-    S.onPageHide = function () { try { blankAll(); } catch (_) {} };
+    S.onPageHide = function () {
+      try { blankAll(); } catch (_) {}
+      try { blankControls(); } catch (_) {}
+    };
     try { window.addEventListener("pagehide", S.onPageHide); } catch (_) {}
     openLink();
     // Even with no device present now we stay armed: the driver's hot-plug
@@ -440,6 +835,7 @@
   function repaint() {
     if (!S) return;
     S.ledCache = [];
+    S.ctlCache = {};
     S.lastCols = 0;
     ledTick();
   }
@@ -448,6 +844,7 @@
     if (!S) return;
     var s = S;
     try { blankAll(); } catch (_) {}
+    try { blankControls(); } catch (_) {}
     S = null;
     if (s.timer) clearInterval(s.timer);
     if (s.onPageHide) {
@@ -477,6 +874,18 @@
     repaint: repaint,
     status: status,
     // Pure mapping helpers exposed for DOM-free smoke tests.
-    _internals: { hwIndexForPad: hwIndexForPad, padForHwNote: padForHwNote, gridCols: gridCols },
+    _internals: {
+      hwIndexForPad: hwIndexForPad,
+      padForHwNote: padForHwNote,
+      gridCols: gridCols,
+      // Function-button surface (D-036 web port) — the node suite pins
+      // the CC assignment table + the LED state transitions.
+      ccFunction: ccFunction,
+      controlFrame: controlFrame,
+      LAYER_ROW: LAYER_ROW,
+      CTL_CCS: CTL_CCS,
+      CTL: CTL,
+      FLASH_MS: FLASH_MS,
+    },
   };
 })();
