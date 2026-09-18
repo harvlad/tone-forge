@@ -3256,8 +3256,80 @@
     }
   }
 
+  // ---------------------------------------------- per-song Launchpad reset
+  // Tear down every Launchpad/pad-synth layer bound to the PREVIOUS song
+  // before a new one takes over. This teardown used to live only in the
+  // #perform-back click handler; retiring the legacy chord-Perform pane
+  // (2aa0599a) made that button unreachable, so switching songs from the
+  // Recent Songs sidebar left the old song's launchpad layers armed. The
+  // audible symptom: the toolbar Melody tool had put the driver into
+  // 'instrument-melody' (a per-song guide, set WITHOUT touching
+  // state.settings), and with the merged pad surface force-enabling the
+  // driver (JamnLpHW.attach → Launchpad.enable) every hardware pad press
+  // on the NEW song still hit the old note grid — synth notes on top of
+  // the kit loops. Must run BEFORE the new song's key/chords/melody are
+  // pushed into the driver (onAnalysisComplete does that further down).
+  function _launchpadResetForNewSong() {
+    // Per-song driver state: chord assignment, melody lane, active pads.
+    try { window.Launchpad && window.Launchpad.onSongUnloaded(); } catch (_) {}
+    // Drop the driver back to the persisted baseline mode. Song-scoped
+    // modes (toolbar Melody tool → 'instrument-melody') bypass
+    // state.settings, so without this the mode — and its pad-press synth
+    // voices — leaks into every subsequent song.
+    try {
+      if (window.Launchpad && window.Launchpad.setMode) {
+        window.Launchpad.setMode(state.settings.launchpadEnabled
+          ? state.settings.launchpadMode : 'off');
+      }
+    } catch (_) {}
+    // Held keyboard-synth voices: a note-off lost across the switch
+    // would drone forever under the new song.
+    try { _midiKbReleaseAll(); } catch (_) {}
+    state.launchpad.lastPresses = [];
+    const contrib = state.launchpad.contribute;
+    if (contrib) {
+      // Stop still-LOOPING chop voices (they never end on their own);
+      // one-shots are left to ring out naturally, as on perform-back.
+      for (const rec of contrib.playingSources || []) {
+        if (rec && rec.loop) {
+          try { rec.src.stop(); } catch (_) {}
+          try { rec.src.disconnect(); } catch (_) {}
+          try { rec.g.disconnect(); } catch (_) {}
+        }
+      }
+      contrib.playingSources = [];
+      contrib.activeByPad.clear();
+      // Looping row clips from the scene-launch column.
+      for (const rec of contrib.rowLoops.values()) {
+        try { rec.src.stop(); } catch (_) {}
+        try { rec.src.disconnect(); } catch (_) {}
+        try { rec.g.disconnect(); } catch (_) {}
+      }
+      contrib.rowLoops.clear();
+      for (const tid of contrib.holdTimers.values()) {
+        try { clearTimeout(tid); } catch (_) {}
+      }
+      contrib.holdTimers.clear();
+      contrib.disabledPads.clear();
+      // Chop cache — new song means new chops. In-flight fetches discard
+      // themselves because loadKey no longer matches.
+      contrib.chops = [];
+      contrib.stemBuffer = null;
+      contrib.sourceStem = null;
+      contrib.sliceMode = null;
+      contrib.loadPromise = null;
+      contrib.loadKey = null;
+    }
+    try { window.Launchpad && window.Launchpad.blankAllSceneLaunch && window.Launchpad.blankAllSceneLaunch(); } catch (_) {}
+    try { window.Launchpad && window.Launchpad.setChops && window.Launchpad.setChops([]); } catch (_) {}
+  }
+
   // ---------------------------------------------- transition to performance
   async function onAnalysisComplete(result) {
+    // A (possibly different) song is taking over the session — tear down
+    // the previous song's Launchpad/synth layers first, then let the code
+    // below push the NEW song's key/chords/melody into the driver.
+    _launchpadResetForNewSong();
     state.fullResult = result;
     // The streaming endpoint attaches the persisted identifier under
     // ``history_id`` (see tone_forge_api.py); the deep-link / bundle
