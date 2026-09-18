@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/static/stage.css?v=4">
 <link rel="stylesheet" href="/static/sequencer.css?v=2">
 <link rel="stylesheet" href="/static/recordings.css?v=2">
-<link rel="stylesheet" href="/static/packs.css?v=1">
+<link rel="stylesheet" href="/static/packs.css?v=2">
 <link rel="stylesheet" href="/static/contribute.css?v=2">
 <link rel="stylesheet" href="/static/lpview.css?v=2">
 <link rel="stylesheet" href="/static/chopedit.css?v=2">
@@ -1336,7 +1336,12 @@
   <section class="view" id="view-stage"><div id="stage-root"></div></section>
   <section class="view" id="view-sequencer"><div id="sequencer-root"></div></section>
   <section class="view" id="view-recordings"><div id="recordings-root"></div></section>
-  <section class="view" id="view-packs"><div id="packs-root"></div></section>
+  <section class="view" id="view-packs">
+    <!-- Projects: per-song pad workspaces (projects.js, iOS ProjectSnapshot
+         contract). Mounted by the router alongside the packs browser. -->
+    <div id="projects-root"></div>
+    <div id="packs-root"></div>
+  </section>
   <section class="view" id="view-contribute"><div id="contribute-root"></div></section>
 
   <!-- Contribute popup: sidebar Voice/Beat/Sample open this centered modal
@@ -1486,16 +1491,17 @@
 <script src="/static/launchpad.js?v=27"></script>
 <script src="/static/artwork.js?v=3"></script>
 <script src="/static/quantize.js?v=1"></script>
-<script src="/static/kit.js?v=29"></script>
+<script src="/static/kit.js?v=30"></script>
 <script src="/static/infotip.js?v=1"></script>
 <script src="/static/stage.js?v=3"></script>
 <script src="/static/sequencer.js?v=3"></script>
 <script src="/static/remix.js?v=7"></script>
 <script src="/static/recordings.js?v=2"></script>
+<script src="/static/projects.js?v=1"></script>
 <script src="/static/packs.js?v=1"></script>
 <script src="/static/contribute.js?v=2"></script>
 <script src="/static/chopedit.js?v=2"></script>
 <script src="/static/lp-hw.js?v=2"></script>
-<script src="/static/jam.js?v=156"></script>
+<script src="/static/jam.js?v=157"></script>
 </body>
 </html>

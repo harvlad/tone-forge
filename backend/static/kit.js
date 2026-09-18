@@ -585,6 +585,15 @@
         // {name, colorHint} of the pad BEFORE its first swap, so Reset can
         // repaint the tile. The engine holds the matching buffer snapshot.
         origSource: {},
+        // Project-workspace lineage (web Projects v1). `swaps` records
+        // WHERE each swapped pad's audio came from (commitPadSource
+        // meta.source: packPad url / songPad index) so a saved workspace
+        // can replay setPadSource; `chopLoad` records the last Stem/
+        // Slices Load so restore re-runs the same server slice;
+        // `hiddenPads` mirrors radial Delete (padIdx → true).
+        swaps: {},
+        chopLoad: null,
+        hiddenPads: {},
         pickerPop: null, // open sound-picker popover state, or null
         pickerPreview: null, // { source, gain, timer } for the hovered preview
         // Manual chop-slicing controls (Stem / Slices / Load), ported from
@@ -1568,6 +1577,7 @@
       if (json) window.localStorage.setItem(s.arr.key, json);
       else window.localStorage.removeItem(s.arr.key);
     } catch (_) {}
+    notifyProjects();
   }
 
   function toggleArrRecording(s) {
@@ -1755,6 +1765,7 @@
     // signature and any latch reader stay honest; mode is the authority.
     s.latch = mode === "latch";
     persistTriggerMode(mode);
+    notifyProjects();
     if (s.modeBtns) {
       // One 3-way choice — the chip key IS the mode ("one" | "follow" |
       // "latch"). A programmatic setMode(s, "latch") (Instant Groove /
@@ -1896,6 +1907,7 @@
     try {
       if (window.localStorage) window.localStorage.setItem("jamn.kit.pads", String(n));
     } catch (_) {}
+    notifyProjects();
     syncPadCountUi(s);
     // A mounted borrow re-ARRANGES at the new capacity (16 = best-of-both, 64 =
     // full) rather than reloading a song kit — reuses decoded buffers.
@@ -1918,6 +1930,12 @@
     // pad. FX re-applies from the persisted store after prepare().
     s.origRegions = {};
     s.gated = {};
+    // Rebuild = back to the server kit: swaps/chop-bake/hidden pads are
+    // factually gone, so the workspace lineage reflects that.
+    s.swaps = {};
+    s.chopLoad = null;
+    s.hiddenPads = {};
+    notifyProjects();
     for (var dk in s.deleted) {
       if (s.deleted[dk] && s.deleted[dk].timer) clearTimeout(s.deleted[dk].timer);
     }
@@ -2143,14 +2161,14 @@
   /** Load handler (port of lpview loadChops): fetch chops for the chosen
    * stem+mode, decode the stem, and bake each sliced region onto a pad. */
   function loadChops(s) {
-    if (s.chopBusy) return;
+    if (s.chopBusy) return Promise.resolve();
     if (!s.entry || !s.entry.id) {
       setChopStatus(s, "Load a song first.");
-      return;
+      return Promise.resolve();
     }
     if (!can(s.engine, "setPadSource")) {
       setChopStatus(s, "Pads not ready.");
-      return;
+      return Promise.resolve();
     }
     s.chopBusy = true;
     if (s.chopEls && s.chopEls.loadBtn) s.chopEls.loadBtn.disabled = true;
@@ -2160,7 +2178,9 @@
       "/chops?stem=" + encodeURIComponent(s.chopStem) +
       "&sliceMode=" + encodeURIComponent(s.chopSlice);
 
-    fetch(url)
+    // Returned so a workspace restore can sequence a swap replay AFTER
+    // the chop bake it rides on.
+    return fetch(url)
       .then(function (r) {
         // 404 = the chops API isn't available for this song/build — degrade
         // to a status line rather than a throw (feature-check).
@@ -2176,6 +2196,10 @@
         }
         return decodeChopStem(s, data.stemUrl, data.stem || s.chopStem).then(function (stemBuf) {
           applyChops(s, chops, stemBuf, data.stem || s.chopStem);
+          // Workspace lineage: this load is fully replayable from its
+          // request params — that pair IS the persisted chop state.
+          s.chopLoad = { stem: s.chopStem, sliceMode: s.chopSlice };
+          notifyProjects();
         });
       })
       .catch(function (err) {
@@ -2205,6 +2229,10 @@
     // index changes under a fresh bake, so clear them (matches reloadKit).
     s.origRegions = {};
     s.gated = {};
+    // A fresh bake replaces every pad, so swap lineage and hidden-pad
+    // state keyed by the OLD indices no longer describe anything real.
+    s.swaps = {};
+    s.hiddenPads = {};
     for (var dk in s.deleted) {
       if (s.deleted[dk] && s.deleted[dk].timer) clearTimeout(s.deleted[dk].timer);
     }
@@ -2903,7 +2931,7 @@
    * removed (trigger() goes dead) and the tile swaps to .is-empty. Unlike
    * native, a 5 s Undo toast can restore it — web has no per-pad re-add
    * picker yet, so an un-undoable delete would be a dead end. */
-  function deletePad(s, padIdx) {
+  function deletePad(s, padIdx, opts) {
     var pad = padByIdx(s, padIdx);
     var p = s.padEls[padIdx];
     if (!pad || !p) return;
@@ -2927,6 +2955,14 @@
       p.el.parentNode.replaceChild(emptyEl, p.el);
     } catch (_) {}
     renderLayers(s);
+    // Workspace state: this pad is now hidden (survives in a saved
+    // project; undo clears it).
+    s.hiddenPads = s.hiddenPads || {};
+    s.hiddenPads[padIdx] = true;
+    notifyProjects();
+    // quiet = workspace restore replaying a persisted hide — no undo
+    // affordance (the restore isn't a user gesture to take back).
+    if (opts && opts.quiet) return;
     var snap = { pad: pad, token: token, timer: 0 };
     s.deleted[padIdx] = snap;
     snap.timer = setTimeout(function () {
@@ -2941,6 +2977,7 @@
     var snap = s.deleted[padIdx];
     if (!snap || !s.alive) return;
     delete s.deleted[padIdx];
+    if (s.hiddenPads) { delete s.hiddenPads[padIdx]; notifyProjects(); }
     if (snap.timer) clearTimeout(snap.timer);
     s.pads.push(snap.pad);
     try {
@@ -2987,6 +3024,7 @@
       if (json) window.localStorage.setItem("jamn.padfx." + s.fxKey, json);
       else window.localStorage.removeItem("jamn.padfx." + s.fxKey);
     } catch (_) {}
+    notifyProjects();
   }
 
   /** "FX" corner chip — a pad carrying non-neutral FX shows it (the web
@@ -3279,6 +3317,13 @@
       if (meta && meta.name) pad.name = meta.name;
       if (meta && meta.colorHint) pad.colorHint = meta.colorHint;
     }
+    // Workspace lineage: WHERE this buffer came from, so a saved project
+    // can replay the swap (buffers themselves are never persisted).
+    if (meta && meta.source) {
+      s.swaps = s.swaps || {};
+      s.swaps[padIdx] = meta.source;
+      notifyProjects();
+    }
     repaintPadSource(s, padIdx);
     setUi(s, padIdx, "idle");
     return true;
@@ -3495,7 +3540,15 @@
             activate: function () {
               fetchPadBuffer(s, pr.url).then(function (buf) {
                 if (!buf) { toast(s, "That sound wouldn't load"); return; }
-                if (commitPadSource(s, padIdx, buf, { name: pr.name, colorHint: pr.colorHint })) {
+                if (commitPadSource(s, padIdx, buf, {
+                  name: pr.name, colorHint: pr.colorHint,
+                  // packPad lineage IS iOS-representable (PadSlot
+                  // {type:"packPad", packId, padIdx}); url is the web
+                  // replay shortcut.
+                  source: { kind: "packPad", packId: packId,
+                    padIdx: pr.padIdx, url: pr.url,
+                    name: pr.name, colorHint: pr.colorHint },
+                })) {
                   closeSoundPicker(s);
                   toast(s, "Sound added");
                 }
@@ -3529,7 +3582,15 @@
           activate: function () {
             var buf = can(s.engine, "sourceBuffer") ? s.engine.sourceBuffer(sp.padIdx) : null;
             if (!buf) { toast(s, "That pad has no sound to copy"); return; }
-            if (commitPadSource(s, padIdx, buf, { name: sp.name, colorHint: sp.colorHint })) {
+            if (commitPadSource(s, padIdx, buf, {
+              name: sp.name, colorHint: sp.colorHint,
+              // songPad lineage is web-only (no iOS PadSlot type for
+              // "copy of another grid pad") — restored by re-reading the
+              // freshly mounted kit's source buffer; content can drift
+              // with the kit, like borrows.
+              source: { kind: "songPad", srcPadIdx: sp.padIdx,
+                name: sp.name, colorHint: sp.colorHint },
+            })) {
               closeSoundPicker(s);
               toast(s, "Sound added");
             }
@@ -3681,6 +3742,7 @@
         run: function () {
           p.loopOverride = !effLoop;
           updateOverrideBadge(s, padIdx);
+          notifyProjects();
         },
       },
       {
@@ -3838,6 +3900,10 @@
             repaintPadSource(s, padIdx);
             setUi(s, padIdx, "idle");
           }
+          // Reset also erases the pad's workspace lineage — the swap is
+          // gone, so a saved project must not replay it.
+          if (s.swaps) delete s.swaps[padIdx];
+          notifyProjects();
           toast(s, "Pad reset");
         },
       },
@@ -4356,6 +4422,9 @@
       fxKey: "pack:" + desc.packId, // pack FX persist per pack, not per song
       fxPop: null, deleted: {},
       origSource: {}, pickerPop: null, pickerPreview: null,
+      // Project-workspace lineage (see the song-mount state doc).
+      swaps: {}, chopLoad: null, hiddenPads: {},
+      packId: desc.packId,
       // Borrow works from a mounted pack too (a borrowed loop pack is exactly
       // this state); its candidate fetch falls back to lastEntryId since a
       // pack carries no entry.id.
@@ -4452,6 +4521,13 @@
                 donorName: desc.borrowDonorName || "Borrowed",
                 paletteHint: desc.paletteHint || null,
                 tempoBpm: manifest.tempoBpm || 0,
+                // Workspace identity: which borrow this IS (host song +
+                // donor + stem), so a saved project can re-request it and
+                // re-match pads content-addressed (never by response
+                // padIdx — see BorrowRef in ProjectSnapshot.swift).
+                analysisId: manifest.analysisId || null,
+                donor: manifest.donor || null,
+                stem: manifest.stem || null,
               };
               // First paint at the current pad count (64 on open).
               return layoutBorrowPads(s, { first: true });
@@ -5109,6 +5185,221 @@
     }).then(function (manifest) { mountManifest(manifest); });
   }
 
+  // ---------- project workspace capture / restore (web Projects v1) ----------
+  //
+  // The kit surface's contribution to a per-song project snapshot
+  // (projects.js assembles the cross-surface JSON; this layer only deals
+  // in the surface's own web-native state). Capture is a plain-object
+  // read; restore replays through the SAME user paths (loadChops,
+  // commitPadSource, setPadEffects, deletePad) so restored state behaves
+  // identically to hand-built state.
+
+  /** Tell the Projects autosave that workspace-relevant state changed.
+   * Fire-and-forget: projects.js debounces and captures. */
+  function notifyProjects() {
+    try {
+      if (window.JamnProjects && typeof window.JamnProjects.noteChange === "function") {
+        window.JamnProjects.noteChange();
+      }
+    } catch (_) {}
+  }
+
+  /** Snapshot the mounted surface's workspace state (plain JSON-able). */
+  function captureWorkspace(s) {
+    if (!s || !s.alive) return null;
+    var loopOverrides = {};
+    for (var i = 0; i < s.padEls.length; i++) {
+      var p = s.padEls[i];
+      if (p && p.loopOverride != null) loopOverrides[i] = p.loopOverride;
+    }
+    var hidden = [];
+    for (var h in (s.hiddenPads || {})) {
+      if (s.hiddenPads[h]) hidden.push(parseInt(h, 10));
+    }
+    hidden.sort(function (a, b) { return a - b; });
+    var padFx = {};
+    for (var f in (s.padFx || {})) padFx[f] = s.padFx[f];
+    var swaps = {};
+    for (var w in (s.swaps || {})) swaps[w] = s.swaps[w];
+
+    var surface;
+    var borrows = [];
+    if (s.borrowSrc && s.borrowSrc.donor) {
+      surface = { type: "borrow", donor: s.borrowSrc.donor,
+        stem: s.borrowSrc.stem || "drums" };
+      // Content-addressed BorrowRefs: identity = donor-timeline span
+      // (sourceLoopStartSec/EndSec) + assetId. targetPadIdx is placement
+      // only. NEVER response padIdx (renumbered per response; drifts).
+      var roleToSlot = {};
+      for (var pi = 0; pi < s.pads.length; pi++) {
+        var ss = s.pads[pi] && s.pads[pi].stemSlice;
+        if (ss && ss.stemRole) roleToSlot[ss.stemRole] = s.pads[pi].padIdx;
+      }
+      s.borrowSrc.items.forEach(function (bm) {
+        var raw = (bm && bm.pad) || {};
+        if (raw.source !== "donor") return;
+        var a = raw.sourceLoopStartSec;
+        var b = raw.sourceLoopEndSec;
+        if (typeof a !== "number" || typeof b !== "number" || !(b > a)) return;
+        var placed = roleToSlot[bm.role];
+        var ref = {
+          donorSongId: s.borrowSrc.donor,
+          stemRole: raw.stemRole || "",
+          loopStartSec: a,
+          loopEndSec: b,
+          transposeSemis: typeof raw.transposeSemis === "number"
+            ? raw.transposeSemis : 0,
+          targetPadIdx: typeof placed === "number" ? placed
+            : (typeof raw.padIdx === "number" ? raw.padIdx : 0),
+        };
+        if (typeof raw.assetId === "string" && raw.assetId) ref.assetId = raw.assetId;
+        if (s.borrowSrc.donorName) ref.donorName = s.borrowSrc.donorName;
+        borrows.push(ref);
+      });
+    } else if (s.entry) {
+      surface = { type: "song", kind: s.kitKind || "auto" };
+    } else {
+      surface = { type: "pack", packId: s.packId || null };
+    }
+
+    var arrangement = null;
+    if (s.arr && s.arr.captured) {
+      for (var bk in s.arr.captured) {
+        if (s.arr.captured[bk] && s.arr.captured[bk].length) {
+          arrangement = arrangement || {};
+          arrangement[String(bk)] = s.arr.captured[bk].slice();
+        }
+      }
+    }
+
+    return {
+      analysisId: s.entry ? s.entry.id
+        : (s.borrowSrc && s.borrowSrc.analysisId) || null,
+      surface: surface,
+      padCount: s.padCount,
+      triggerMode: s.mode,
+      swaps: swaps,
+      chopLoad: s.chopLoad ? { stem: s.chopLoad.stem, sliceMode: s.chopLoad.sliceMode } : null,
+      padFx: padFx,
+      loopOverrides: loopOverrides,
+      hiddenPads: hidden,
+      arrangement: arrangement,
+      borrows: borrows,
+    };
+  }
+
+  /** Replay a captured workspace onto the mounted surface. The surface
+   * must already be the right one (song kit / borrow / pack) — mounting
+   * is the caller's job (projects.js). Order matters: the chop bake
+   * replaces every pad, so it runs before swaps, which run before the
+   * per-pad decorations (FX / overrides / hides). Resolves with a
+   * report; never rejects (per-item failures degrade + count). */
+  function applyWorkspace(s, ws) {
+    if (!s || !s.alive || !ws) return Promise.resolve(null);
+    var report = { swapsApplied: 0, swapsFailed: 0, fxApplied: 0,
+      hidden: 0, chopLoaded: false };
+    var chain = Promise.resolve();
+
+    if (ws.chopLoad && ws.chopLoad.stem && s.entry) {
+      chain = chain.then(function () {
+        if (!s.alive) return;
+        s.chopStem = ws.chopLoad.stem;
+        if (ws.chopLoad.sliceMode) s.chopSlice = ws.chopLoad.sliceMode;
+        if (s.chopEls) {
+          try {
+            s.chopEls.stemSel.value = s.chopStem;
+            s.chopEls.sliceSel.value = s.chopSlice;
+          } catch (_) {}
+        }
+        return loadChops(s).then(function () {
+          report.chopLoaded = !!s.chopLoad;
+        });
+      });
+    }
+
+    chain = chain.then(function () {
+      if (!s.alive) return;
+      var jobs = [];
+      var swaps = ws.swaps || {};
+      Object.keys(swaps).forEach(function (k) {
+        var idx = parseInt(k, 10);
+        var src = swaps[k];
+        if (!src || !isFinite(idx)) return;
+        var meta = { name: src.name, colorHint: src.colorHint, source: src };
+        if (src.kind === "packPad" && src.url) {
+          jobs.push(fetchPadBuffer(s, src.url).then(function (buf) {
+            if (buf && s.alive && commitPadSource(s, idx, buf, meta)) {
+              report.swapsApplied++;
+            } else {
+              report.swapsFailed++;
+            }
+          }));
+        } else if (src.kind === "songPad") {
+          // Re-read from the freshly mounted kit — content-follows-kit,
+          // same drift semantics as borrows.
+          var buf = can(s.engine, "sourceBuffer")
+            ? s.engine.sourceBuffer(src.srcPadIdx) : null;
+          if (buf && commitPadSource(s, idx, buf, meta)) report.swapsApplied++;
+          else report.swapsFailed++;
+        } else {
+          report.swapsFailed++;
+        }
+      });
+      return Promise.all(jobs);
+    });
+
+    chain = chain.then(function () {
+      if (!s.alive) return report;
+      if (ws.padFx && can(s.engine, "setPadEffects")) {
+        for (var k in ws.padFx) {
+          var idx = parseInt(k, 10);
+          if (!isFinite(idx)) continue;
+          try {
+            var norm = s.engine.setPadEffects(idx, ws.padFx[k]);
+            if (norm) {
+              s.padFx[idx] = norm;
+              report.fxApplied++;
+              updateFxBadge(s, idx);
+            }
+          } catch (_) {}
+        }
+        savePadFx(s);
+      }
+      if (ws.loopOverrides) {
+        for (var lk in ws.loopOverrides) {
+          var li = parseInt(lk, 10);
+          var pe = isFinite(li) && s.padEls[li];
+          if (pe) {
+            pe.loopOverride = !!ws.loopOverrides[lk];
+            updateOverrideBadge(s, li);
+          }
+        }
+      }
+      if (ws.arrangement && s.arr && s.arr.key) {
+        var cap = {};
+        for (var bk in ws.arrangement) {
+          var bi = parseInt(bk, 10);
+          if (isFinite(bi) && Array.isArray(ws.arrangement[bk])) {
+            cap[bi] = ws.arrangement[bk].slice();
+          }
+        }
+        s.arr.captured = cap;
+        persistArrangement(s);
+        refreshArrangementFilled(s);
+        updateArrControls(s);
+      }
+      (ws.hiddenPads || []).forEach(function (idx) {
+        if (s.padEls[idx]) {
+          deletePad(s, idx, { quiet: true });
+          report.hidden++;
+        }
+      });
+      return report;
+    });
+
+    return chain;
+  }
+
   window.JamnKit = {
     mount: mount,
     unmount: unmount,
@@ -5121,6 +5412,10 @@
     // Pad master bus (PadEngine output, pre-destination) — the node the
     // session recorder taps so takes hear the pads (see wireKitMaster).
     masterNode: function () { return current && current.master; },
+    // Project workspaces (web Projects v1): the surface's own capture/
+    // replay half; projects.js owns the store + cross-surface JSON.
+    captureWorkspace: function () { return captureWorkspace(current); },
+    applyWorkspace: function (ws) { return applyWorkspace(current, ws); },
     // Current kit kind: 'auto' (default song kit), 'drums', 'flip', or
     // 'pack' — lets Remix's pads-follow respect the mode the user chose
     // instead of force-switching to the drum kit on every Re-Drum.

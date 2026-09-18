@@ -15998,31 +15998,43 @@
       if (_packsMounted) return;
       const root = $('packs-root');
       if (!root || !window.JamnPacks) return;
+      // Shared with the Projects panel below — loading a project mounts
+      // its base song's kit through the exact same path a Packs card
+      // does.
+      const onMountKit = desc => {
+        if (desc.kind === 'sample-pack') {
+          window.JamnKit?.mountPack?.(desc);
+          _explicitKitMount = true;
+          showView('kit');
+          return;
+        }
+        fetch(`/api/history/${desc.entryId}`)
+          .then(r => (r.ok ? r.json() : null))
+          .then(entry => {
+            if (!entry) return;
+            _currentEntry = entry;
+            _labelSong(entry);
+            window.JamnKit?.mount(entry, { kind: desc.kind });
+            _mountedEntryId = entry.id;
+            _explicitKitMount = true;
+            showView('kit');
+          });
+      };
       try {
-        window.JamnPacks.mount(root, {
-          entry: _currentEntry,
-          onMountKit: desc => {
-            if (desc.kind === 'sample-pack') {
-              window.JamnKit?.mountPack?.(desc);
-              _explicitKitMount = true;
-              showView('kit');
-              return;
-            }
-            fetch(`/api/history/${desc.entryId}`)
-              .then(r => (r.ok ? r.json() : null))
-              .then(entry => {
-                if (!entry) return;
-                _currentEntry = entry;
-                _labelSong(entry);
-                window.JamnKit?.mount(entry, { kind: desc.kind });
-                _mountedEntryId = entry.id;
-                _explicitKitMount = true;
-                showView('kit');
-              });
-          },
-        });
+        window.JamnPacks.mount(root, { entry: _currentEntry, onMountKit });
         _packsMounted = true;
       } catch (e) { console.warn('[jamn-router] packs mount failed:', e); }
+      // Projects panel (per-song pad workspaces, iOS snapshot contract)
+      // lives in the same Packs/Library surface.
+      try {
+        const projRoot = $('projects-root');
+        if (projRoot && window.JamnProjects) {
+          window.JamnProjects.mount(projRoot, {
+            onMountKit,
+            getEntry: () => _currentEntry,
+          });
+        }
+      } catch (e) { console.warn('[jamn-router] projects mount failed:', e); }
     }
 
     // NOTE: the old #view-launchpad chop-grid surface (lpview.js /

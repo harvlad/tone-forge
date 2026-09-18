@@ -186,3 +186,101 @@
     gap: 10px;
   }
 }
+
+/* ------------------------------------------------------------ projects
+ * Projects panel (projects.js) — per-song pad workspaces, hosted in the
+ * same Packs/Library surface. Rows follow the recordings-list idiom
+ * (inline-rename input + compact action buttons). */
+
+.jamn-projects { padding: 16px 16px 0; }
+
+.jamn-proj-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.jamn-proj-head .jamn-packs-heading { margin-right: auto; }
+
+.jamn-proj-status {
+  min-height: 16px;
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: var(--jamn-text2, #A1A1AA);
+}
+
+.jamn-proj-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.jamn-proj-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-md, 12px);
+  background: var(--jamn-bg2, #17171F);
+}
+
+.jamn-proj-meta { flex: 1; min-width: 0; }
+
+.jamn-proj-name {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--jamn-text, #fff);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 4px;
+}
+
+.jamn-proj-name:focus {
+  border-color: var(--jamn-border, #2A2A36);
+  outline: none;
+  background: var(--jamn-bg, #0F0F15);
+}
+
+.jamn-proj-sub {
+  font-size: 11px;
+  color: var(--jamn-text2, #A1A1AA);
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jamn-proj-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.jamn-proj-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--jamn-text2, #A1A1AA);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.jamn-proj-btn:hover {
+  color: var(--jamn-text, #fff);
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.jamn-proj-load {
+  color: var(--jamn-text, #fff);
+  border-color: var(--jamn-accent, #8B5CF6);
+}
+
+.jamn-proj-delete:hover { border-color: var(--jamn-danger, #EF4444); }
+
+.jamn-proj-save {
+  color: var(--jamn-text, #fff);
+  background: color-mix(in srgb, var(--jamn-accent, #8B5CF6) 24%, transparent);
+  border-color: var(--jamn-accent, #8B5CF6);
+}
