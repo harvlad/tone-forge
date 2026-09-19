@@ -146,77 +146,31 @@ REQ=requirements.txt
 echo "==> installing deps from $REQ"
 python -m pip install -q -r "$REQ" 2>&1 | tail -3 || true
 
-# 2b. basic-pitch via its ONNX backend (NO TensorFlow) — the polyphonic MIDI
-#     detector the full-fidelity ensemble needs for guitar/other. basic-pitch
-#     goes in --no-deps so its base install_requires can't drag FULL TensorFlow
-#     in — with TF present basic_pitch prefers the TF-CPU backend and runs the
-#     polyphonic pass on CPU even when onnxruntime-gpu is installed.
+# 2b. basic-pitch — the polyphonic MIDI detector the full-fidelity ensemble
+#     needs for guitar/other. Runs via ONNX (NO TensorFlow: basic-pitch goes in
+#     --no-deps so its install_requires can't drag full TF in, which would force
+#     the slow TF-CPU backend).
 #
-# ROOT CAUSE this block now fixes (A40 canary on the baked image, cuda12.6):
-#   `pip install onnxruntime-gpu` now pulls a CUDA **13** wheel — PyPI's default
-#   onnxruntime-gpu build flipped to CUDA 13 around ORT 1.27, so the baked image
-#   shipped onnxruntime 1.29.0 built for CUDA 13. On this cuda12.6 image that
-#   build can't load its provider libs (no libcudart.so.13 / libcublas.so.13
-#   anywhere — the image is CUDA 12.6) and onnxruntime SILENTLY falls back to
-#   CPU, printing "CUDA 13.x. Please install all dependencies ... make sure
-#   they're in the PATH". basic_pitch on CPU is ~18x realtime → unusable.
-#   The OLD skip-guard here tested get_available_providers(), which lists the
-#   COMPILED-IN providers (always includes CUDA for any onnxruntime-gpu build) —
-#   so it never noticed the CPU fallback and skipped every fix.
+#   CPU IS FINE — and that ends a long saga. The A40 canaries showed the pod's
+#   onnxruntime can't reach the GPU (a CUDA-13 wheel vs the image's CUDA 12.6;
+#   symbol cudaLibraryGetKernel@libcudart.so.12), and a smoke test read "16.7s
+#   for a 1s clip" which looked catastrophic. But that 16.7s is ONE-TIME model
+#   load: warmed, basic_pitch on CPU is ~0.02x realtime (MEASURED — a 30s clip
+#   in 0.6s), so a 4-min stem is ~5s. So we do NOT fight onnxruntime for the GPU
+#   here — leaving it on CPU is full-fidelity AND fast enough. (GPU-accelerating
+#   ORT with a matched onnxruntime build is a separate follow-up that also
+#   speeds prod analysis.)
 #
-# FIX: test whether the CUDA EP actually LOADS (build a real InferenceSession
-#   and check get_providers()[0]), and if it doesn't, reinstall onnxruntime-gpu
-#   from the CUDA-12 feed so its build MATCHES the image's CUDA 12.6 / cuDNN 9
-#   runtime (which LD_LIBRARY_PATH from step 1b makes findable). Best-effort: on
-#   failure the ensemble falls back to pYIN (lower fidelity) but the shard still
-#   completes.
-_ort_cuda_loads() {
-  # Exit 0 only if onnxruntime's CUDA EP actually loads for the basic_pitch
-  # model (get_providers lists it FIRST), not merely if it's compiled in.
-  python - <<'PY'
-import sys
-try:
-    import onnxruntime as ort
-    from basic_pitch import ICASSP_2022_MODEL_PATH
-except Exception:
-    sys.exit(1)
-mp = str(ICASSP_2022_MODEL_PATH)
-if not mp.endswith(".onnx"):
-    sys.exit(1)  # not the ONNX model variant — CUDA EP N/A
-try:
-    s = ort.InferenceSession(mp, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-except Exception:
-    sys.exit(1)
-sys.exit(0 if s.get_providers()[:1] == ["CUDAExecutionProvider"] else 1)
-PY
-}
-if _ort_cuda_loads >/dev/null 2>&1; then
-  echo "==> basic_pitch ONNX CUDA EP already loads — no onnxruntime reinstall needed"
-elif command -v nvidia-smi >/dev/null 2>&1; then
-  echo "==> basic_pitch ONNX CUDA EP does NOT load — reinstalling a CUDA-12.6-"
-  echo "    MATCHED onnxruntime-gpu (pinned 1.20.1)"
-  # Canary 4 proved the issue is a MINOR-version mismatch, not just cuDNN path:
-  # the CUDA-12 feed's latest onnxruntime (1.29) is built for CUDA 12.8 and needs
-  # `cudaLibraryGetKernel@libcudart.so.12` from 12.8, which the image's CUDA 12.6
-  # libcudart lacks → "Failed to create CUDAExecutionProvider ... symbol:
-  # cudaLibraryGetKernel". onnxruntime-gpu 1.20.1 (PyPI, PRE the CUDA-13 wheel
-  # flip that landed ~ORT 1.27) is a CUDA-12.x + cuDNN-9 build whose libcudart
-  # symbols all exist in 12.6. Pin it. If it STILL can't reach the GPU the
-  # ensemble runs basic_pitch on CPU — slower but FULL fidelity (the crate's
-  # generous midi_timeout_s lets it finish), never a pYIN downgrade.
-  python -m pip uninstall -y onnxruntime onnxruntime-gpu tensorflow >/dev/null 2>&1 || true
-  { python -m pip install --no-deps basic-pitch \
-      && python -m pip install mir_eval resampy \
-      && python -m pip install "onnxruntime-gpu==1.20.1"; } 2>&1 | tail -3 \
-    || echo "onnxruntime-gpu(1.20.1) install skipped (CPU basic_pitch stays in effect)"
-  if _ort_cuda_loads >/dev/null 2>&1; then
-    echo "==> CUDA-12 onnxruntime-gpu now loads the CUDA EP"
-  else
-    echo "########## WARN: CUDA EP STILL not loading after cuda-12 reinstall — basic_pitch will run on CPU (pYIN fallback / slow) ##########"
-  fi
+#   SAFETY: never uninstall/downgrade a working onnxruntime. The baked image
+#   already ships onnxruntime + basic_pitch; the earlier uninstall-then-pin
+#   risked a failed reinstall leaving NO onnxruntime at all (canary 5: "No
+#   module named onnxruntime" → basic_pitch dropped → pYIN). So: if both import,
+#   use them as-is; otherwise install the plain CPU build.
+if python -c "import basic_pitch, onnxruntime" 2>/dev/null; then
+  echo "==> basic_pitch + onnxruntime present — using as-is (CPU, ~0.02x realtime warmed)"
 else
-  # CPU-only host (no nvidia-smi): install the plain CPU build so basic_pitch
-  # at least works, no CUDA feed needed.
+  echo "==> installing basic_pitch + onnxruntime (CPU build)"
+  python -m pip uninstall -y tensorflow >/dev/null 2>&1 || true  # keep TF off → ONNX backend
   { python -m pip install --no-deps basic-pitch \
       && python -m pip install mir_eval resampy onnxruntime; } 2>&1 | tail -3 \
     || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
