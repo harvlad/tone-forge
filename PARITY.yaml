@@ -229,26 +229,6 @@ features:
         status: na
         note: "No library UI."
 
-  - id: songs-page
-    name: Unified "Songs" page — one searchable/filterable/sortable table (finished analyses ∪ in-flight jobs), pluggable sources
-    platforms:
-      web:
-        status: missing
-        note: "Being built in parallel (web+desktop one-pass). Replaces the Recent-Songs list + Band Room card stack with a full-screen table over GET /api/library/search; source tabs make the Vinyl Crate + CC catalogs droppable behind the same shell."
-      ios:
-        status: missing
-        note: "iOS Library already lists history + in-flight jobs (RootView#refreshJobs). The unified faceted table + /api/library/search source-plug is a later port once the web/desktop shape settles; the ToneForgeEngine SearchPage twin lands then."
-      desktop:
-        status: done
-        evidence: "jam-desktop/Sources/JamDesktop/Library/SongsPageView.swift#SongsPageView"
-        note: "Full-screen Songs page (.songs view) replaces the Recent-Songs sidebar list + the Band Room card stack as the library destination. Search box, source tabs (My Library wired; Vinyl Crate/Jamendo/ccMixter/This Mac declared coming-soon), facet rail (status/tempo/genre/key/mood/tags), a virtualized SwiftUI Table (title/artist/key/tempo/duration/genre/status + status-driven action: Open when done, live % when running, Retry/Dismiss on error). Rows are the server union (SongsModel over /api/library/search, sorted-before-paged with an OPAQUE cursor) with the desktop's live AnalysisQueueModel overlaid so a just-submitted upload shows instantly and a completing job COLLAPSES into its history row (SongsModel.merged, unit-tested). Band Room is now the Status column + the 'Processing (N)' chip, not a destination: 'View all songs', the toolbar analyses-in-progress button, and every Intake post-submit route to .songs. Per-song deep open (/api/history/{id}) untouched. Contract twin of tone_forge/contracts.py SourceTrack/SearchPage/FacetBucket/SourceId/TrackStatus in JamDesktopCore/Songs/SourceTrack.swift."
-      plugin:
-        status: na
-        note: "jamn Kit is a sampler/kit CONSUMER: it browses history via a transient PopupMenu to load a kit, not a full library workspace. A faceted songs table is a jam-app surface (same rationale as launchpad-pad-grid)."
-      connect:
-        status: na
-        note: "Connect is a low-latency monitoring engine with no song/library UI."
-
   - id: launchpad-mk3
     name: Novation Launchpad Pro MK3 grid (pads + LEDs)
     platforms:
@@ -797,9 +777,9 @@ features:
         evidence: "backend/tone_forge_api.py#library_search"
         note: "Backend data layer shipped this pass (the shared engine both web + desktop consume, per the shared-engine-first doctrine): GET /api/library/search + POST /api/library/ingest over tone_forge.sources.LibrarySource, which UNIONs _load_history() with the /api/jobs registry keyed so a done job (carrying its history_id) COLLAPSES into its history row, then does server-side facet filtering (genre/key/tempo-range/mood/tags/status) + sort (recent|title|tempo|key) BEFORE opaque-cursor paging (a background ingest inserting a row cannot shift the window). Row shape is the frozen contracts.SourceTrack; _HISTORY_LIST_FIELDS now projects genre/mood/tags. The scope=mine owner gate mirrors /api/history exactly (SHARED_LIBRARY testing cross-show preserved, not weakened). ingest is the single content-hash DEDUPE door. Pinned by backend/tests/test_library_search.py. PARTIAL because the full-screen virtualized/windowed table UI on the Jam page — replacing the Recent Songs sidebar list + the Band Room card-stack, with the status-driven trailing action cell (Open / live % / Retry|Dismiss) — is the follow-up pass; CrateSource/JamendoSource/CcmixterSource/DeviceSource are declared seams (SourceId) not yet built."
       desktop:
-        status: partial
-        evidence: "backend/tone_forge_api.py#library_search"
-        note: "Consumes the SAME /api/library/search backend shipped this pass (identical layout to web by design). PARTIAL because the native Songs page — rewiring RootView 'View all songs' away from the raw .bandRoom queue to the new table, with AnalysisQueueModel .done(historyId) rows collapsing into their history rows — is the follow-up pass. Backend union/collapse/facet/sort/cursor + scope=mine gate already land here (backend/tests/test_library_search.py)."
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Library/SongsPageView.swift#SongsPageView"
+        note: "Full-screen Songs page (.songs view) replaces the Recent-Songs sidebar list + the Band Room card stack as the library destination. Search box, source tabs (My Library wired; Vinyl Crate/Jamendo/ccMixter/This Mac declared coming-soon), facet rail (status/tempo/genre/key/mood/tags), a virtualized SwiftUI Table (title/artist/key/tempo/duration/genre/status + status-driven action: Open when done, live % when running, Retry/Dismiss on error). Rows are the server union (SongsModel over /api/library/search, sorted-before-paged with an OPAQUE cursor) with the desktop's live AnalysisQueueModel overlaid so a just-submitted upload shows instantly and a completing job COLLAPSES into its history row (SongsModel.merged, unit-tested). Band Room is now the Status column + the 'Processing (N)' chip, not a destination: 'View all songs', the toolbar analyses-in-progress button, and every Intake post-submit route to .songs. Per-song deep open (/api/history/{id}) untouched. Contract twin of tone_forge/contracts.py SourceTrack/SearchPage/FacetBucket/SourceId/TrackStatus in JamDesktopCore/Songs/SourceTrack.swift."
       ios:
         status: missing
         note: "This pass scopes the unified table to web + desktop. iOS has its own Library surface; porting the SourceTrack row shape + /api/library/search-driven table into ToneForgeMobile is a queued follow-up (the LibrarySource seam is already shared backend, so iOS inherits the union/collapse/facet/cursor semantics for free when built)."
