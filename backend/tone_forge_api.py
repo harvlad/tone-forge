@@ -6828,7 +6828,7 @@ async def get_crate_candidates(
     tags: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
     camelot: Optional[str] = Query(None),
-    license_clean: bool = Query(False, description="Only clean-export (exclude CC-BY-SA)"),
+    clean_export: bool = Query(False, description="Only clean-export (exclude CC-BY-SA)"),
     limit: int = Query(24),
 ) -> JSONResponse:
     """Crate tracks ranked for THIS session by the weighted match model
@@ -6845,7 +6845,7 @@ async def get_crate_candidates(
     # Pre-rank facet filter (the two models stack).
     filtered = _csearch.search_crate(
         tracks, genre=genre, mood=mood, tags=_split_csv(tags), key=key,
-        camelot=camelot, clean_export=license_clean, limit=len(tracks) or 1)["tracks"]
+        camelot=camelot, clean_export=clean_export, limit=len(tracks) or 1)["tracks"]
 
     session_result = None
     if session_id:
@@ -6864,7 +6864,7 @@ async def get_crate_candidates(
 
     ranked = _cmatch.rank_crate(
         session_result, filtered, blobs, stem=stem, genre_mode=genre_mode,
-        clean_export=license_clean, limit=limit)
+        clean_export=clean_export, limit=limit)
 
     by_id = {t.id: t for t in filtered}
     candidates = []
