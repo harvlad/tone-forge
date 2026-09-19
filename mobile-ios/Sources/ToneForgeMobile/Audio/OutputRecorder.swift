@@ -147,6 +147,19 @@ public final class OutputRecorder: ObservableObject {
         return finish()
     }
 
+    /// Test seam: force the published UI mirrors into a given state
+    /// without a live audio graph. `start()` needs a running
+    /// AVAudioEngine (absent in the unit environment), but the transport
+    /// bar's layout-invariant test has to render the pill in its
+    /// `.recording` phase (level meter + elapsed label). This mutates
+    /// ONLY the published `state`/`elapsedSec` — it installs no tap and
+    /// opens no file, so it can't strand a tap or leave a 0-byte take.
+    /// `private(set)` keeps this the sole in-type write path.
+    func setPublishedStateForTesting(_ state: State, elapsedSec: Double = 0) {
+        self.state = state
+        self.elapsedSec = elapsedSec
+    }
+
     private func autoStop() {
         guard state == .recording else { return }  // stop() may have raced us
         let url = finish()
