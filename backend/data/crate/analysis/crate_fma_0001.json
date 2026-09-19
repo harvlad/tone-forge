@@ -1,0 +1,36 @@
+{
+  "source_name": "Neon Rain",
+  "tempo_bpm": 120.0,
+  "detected_key": "A minor",
+  "detected_key_strength": 0.71,
+  "duration_sec": 64.0,
+  "detection": {"is_full_mix": true, "is_guitar": false, "is_bass": true, "is_drums": true, "is_synth": true},
+  "downbeats_s": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0, 32.0],
+  "sections": [
+    {"type": "intro", "start_time": 0.0, "end_time": 8.0, "energy": 0.22},
+    {"type": "verse", "start_time": 8.0, "end_time": 24.0, "energy": 0.41},
+    {"type": "chorus", "start_time": 24.0, "end_time": 48.0, "energy": 0.63},
+    {"type": "verse", "start_time": 48.0, "end_time": 64.0, "energy": 0.44}
+  ],
+  "chords": [
+    {"symbol": "Am", "start_s": 0.0, "end_s": 4.0},
+    {"symbol": "F", "start_s": 4.0, "end_s": 8.0},
+    {"symbol": "C", "start_s": 8.0, "end_s": 12.0},
+    {"symbol": "G", "start_s": 12.0, "end_s": 16.0}
+  ],
+  "energy_curve": [0.22, 0.30, 0.41, 0.55, 0.63, 0.58, 0.44, 0.30],
+  "stems_paths": {"drums": "crate/fma/0001/drums.wav", "bass": "crate/fma/0001/bass.wav", "other": "crate/fma/0001/other.wav"},
+  "melody": {
+    "source_stem": "other",
+    "confidence": 0.62,
+    "notes": [
+      {"pitch": 69, "start": 0.0, "end": 0.5, "velocity": 90},
+      {"pitch": 72, "start": 0.5, "end": 1.0, "velocity": 88},
+      {"pitch": 76, "start": 1.0, "end": 1.5, "velocity": 91},
+      {"pitch": 74, "start": 1.5, "end": 2.0, "velocity": 84},
+      {"pitch": 72, "start": 2.0, "end": 2.5, "velocity": 80},
+      {"pitch": 69, "start": 2.5, "end": 3.0, "velocity": 86}
+    ]
+  },
+  "performance_graph": {"assets": [{"id": "fma0001-a1"}], "phrases": [{"energy": 0.41}], "patterns": [], "variations": [], "loops": []}
+}

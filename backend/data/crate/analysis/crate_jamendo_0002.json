@@ -1,0 +1,36 @@
+{
+  "source_name": "Sunset Drive",
+  "tempo_bpm": 128.0,
+  "detected_key": "C major",
+  "detected_key_strength": 0.66,
+  "duration_sec": 96.0,
+  "detection": {"is_full_mix": true, "is_guitar": true, "is_bass": true, "is_drums": true, "is_synth": false},
+  "downbeats_s": [0.0, 1.875, 3.75, 5.625, 7.5, 9.375, 11.25, 13.125, 15.0, 16.875, 18.75, 20.625, 22.5, 24.375, 26.25, 28.125, 30.0],
+  "sections": [
+    {"type": "intro", "start_time": 0.0, "end_time": 7.5, "energy": 0.28},
+    {"type": "verse", "start_time": 7.5, "end_time": 30.0, "energy": 0.5},
+    {"type": "chorus", "start_time": 30.0, "end_time": 60.0, "energy": 0.72},
+    {"type": "bridge", "start_time": 60.0, "end_time": 96.0, "energy": 0.55}
+  ],
+  "chords": [
+    {"symbol": "C", "start_s": 0.0, "end_s": 3.75},
+    {"symbol": "G", "start_s": 3.75, "end_s": 7.5},
+    {"symbol": "Am", "start_s": 7.5, "end_s": 11.25},
+    {"symbol": "F", "start_s": 11.25, "end_s": 15.0}
+  ],
+  "energy_curve": [0.28, 0.4, 0.5, 0.62, 0.72, 0.68, 0.55, 0.42],
+  "stems_paths": {"drums": "crate/jamendo/0002/drums.wav", "bass": "crate/jamendo/0002/bass.wav", "other": "crate/jamendo/0002/other.wav", "vocals": "crate/jamendo/0002/vocals.wav"},
+  "melody": {
+    "source_stem": "vocals",
+    "confidence": 0.78,
+    "notes": [
+      {"pitch": 64, "start": 0.0, "end": 0.6, "velocity": 96},
+      {"pitch": 67, "start": 0.6, "end": 1.2, "velocity": 92},
+      {"pitch": 69, "start": 1.2, "end": 1.8, "velocity": 90},
+      {"pitch": 72, "start": 1.8, "end": 2.4, "velocity": 95},
+      {"pitch": 71, "start": 2.4, "end": 3.0, "velocity": 88},
+      {"pitch": 67, "start": 3.0, "end": 3.6, "velocity": 85}
+    ]
+  },
+  "performance_graph": {"assets": [{"id": "jam0002-a1"}], "phrases": [{"energy": 0.5}], "patterns": [], "variations": [], "loops": []}
+}

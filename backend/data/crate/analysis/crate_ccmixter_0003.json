@@ -1,0 +1,34 @@
+{
+  "source_name": "Blue Ember",
+  "tempo_bpm": 90.0,
+  "detected_key": "E minor",
+  "detected_key_strength": 0.58,
+  "duration_sec": 72.0,
+  "detection": {"is_full_mix": true, "is_guitar": false, "is_bass": false, "is_drums": true, "is_synth": true},
+  "downbeats_s": [0.0, 2.667, 5.333, 8.0, 10.667, 13.333, 16.0, 18.667, 21.333, 24.0, 26.667, 29.333, 32.0, 34.667, 37.333, 40.0, 42.667],
+  "sections": [
+    {"type": "intro", "start_time": 0.0, "end_time": 10.667, "energy": 0.18},
+    {"type": "verse", "start_time": 10.667, "end_time": 40.0, "energy": 0.34},
+    {"type": "chorus", "start_time": 40.0, "end_time": 72.0, "energy": 0.49}
+  ],
+  "chords": [
+    {"symbol": "Em", "start_s": 0.0, "end_s": 5.333},
+    {"symbol": "C", "start_s": 5.333, "end_s": 10.667},
+    {"symbol": "G", "start_s": 10.667, "end_s": 16.0},
+    {"symbol": "D", "start_s": 16.0, "end_s": 21.333}
+  ],
+  "energy_curve": [0.18, 0.24, 0.34, 0.42, 0.49, 0.44, 0.36, 0.28],
+  "stems_paths": {"drums": "crate/ccmixter/0003/drums.wav", "other": "crate/ccmixter/0003/other.wav"},
+  "melody": {
+    "source_stem": "other",
+    "confidence": 0.55,
+    "notes": [
+      {"pitch": 64, "start": 0.0, "end": 0.7, "velocity": 80},
+      {"pitch": 67, "start": 0.7, "end": 1.4, "velocity": 78},
+      {"pitch": 71, "start": 1.4, "end": 2.1, "velocity": 82},
+      {"pitch": 69, "start": 2.1, "end": 2.8, "velocity": 76},
+      {"pitch": 67, "start": 2.8, "end": 3.5, "velocity": 74}
+    ]
+  },
+  "performance_graph": {"assets": [{"id": "ccm0003-a1"}], "phrases": [{"energy": 0.34}], "patterns": [], "variations": [], "loops": []}
+}

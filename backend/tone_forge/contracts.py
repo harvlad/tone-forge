@@ -60,6 +60,14 @@ __all__ = [
     "TransportState",
     "GuidanceTrack",
     "SessionBundle",
+    # Melody lane
+    "MelodyPhrase",
+    "MelodySequence",
+    # Vinyl Crate (shared CC-BY/CC0 donor pool)
+    "CrateLicense",
+    "CrateLicenseRecord",
+    "CrateFeatures",
+    "CrateTrack",
     # Re-exports for convenience
     "Stem",
 ]
@@ -688,3 +696,138 @@ class SessionBundle:
     # legacy bundle construction and old clients unchanged; when
     # present, ``guidance.note_highway`` mirrors ``melody.notes``.
     melody: Optional[MelodySequence] = None
+
+
+# ---------------------------------------------------------------------------
+# Vinyl Crate — a shared, curated, read-only donor pool of legally-clean
+# tracks (Jamendo / FMA / ccMixter CC0 + CC-BY).
+#
+# The crate reuses the existing borrow engine (performance/borrow.py): a
+# CrateTrack's stored analysis is adapted into a borrow "entry" and fed to
+# the SAME donor ranker + render path a user's own songs use. These DTOs are
+# the *catalog/search* rows — searchable metadata that is the UNION of (a)
+# source metadata carried in from the platform (genre/tags/mood/…, which the
+# analysis pipeline does not compute) and (b) Jamn-analyzed features
+# (tempo/key/energy/stems/…). The full analysis blob (chords, sections,
+# performance_graph) lives beside the manifest, not on these rows.
+#
+# License is first-class: the CC license on each track — not any platform
+# API — authorizes streaming + derivatives + export, so every row carries a
+# CrateLicenseRecord with the ready-to-display attribution string and a single
+# ``export_encumbered`` boolean the export/UI path gates on (True for the
+# copyleft CC-BY-SA, which would force a user's remix to be re-licensed).
+# ---------------------------------------------------------------------------
+
+
+class CrateLicense(str, Enum):
+    """CC license of a crate track.
+
+    Preference order for admission/ranking is CC0 > CC-BY > (avoid)
+    CC-BY-SA — expressed by the ``crate`` subsystem's ranking helpers, not
+    a field here. CC-BY-SA is copyleft: it contaminates a user's exported
+    remix, so it is admitted only with ``export_encumbered=True``.
+    """
+
+    CC0 = "CC0"
+    CC_BY = "CC-BY-4.0"
+    CC_BY_SA = "CC-BY-SA-4.0"
+
+
+@dataclass(frozen=True)
+class CrateLicenseRecord:
+    """The CC provenance for one crate track — the compliance artifact.
+
+    Formalizes the loose attribution dict (``_ATTRIBUTION_FIELDS`` in the
+    API) and the catalog.json rows into a typed record. Self-hosting the
+    audio is authorized by the license on the track, so this record — with
+    a complete, ready-to-display ``attribution`` string — is what proves a
+    track is clean; a track missing any required field is rejected at
+    ingest and never ships.
+
+    ``export_encumbered`` is the ONE boolean the export/UI path reads
+    (True for CC-BY-SA). It is stored, never re-derived downstream, so the
+    exporters have a single field to gate on.
+    """
+
+    license_id: CrateLicense
+    license_url: str  # e.g. https://creativecommons.org/licenses/by/4.0/
+    attribution: str  # ready-to-display CC-BY credit string
+    source: str  # "jamendo" | "fma" | "ccmixter"
+    source_track_id: str
+    source_url: str
+    # sha256 of the downloaded audio — dedupe + provenance (same role as
+    # AcquiredAudio.content_hash). Empty until the file is fetched.
+    content_hash: str = ""
+    acquired_at: str = ""  # ISO-8601
+    export_encumbered: bool = False
+
+
+@dataclass(frozen=True)
+class CrateFeatures:
+    """The Jamn-ANALYZED metadata for a crate track (union member (b)).
+
+    Every field is defaulted so a partial analysis still parses. The
+    "deferred seam" fields (``time_signature``, ``has_vocals``,
+    ``loudness_lufs``, ``spectral_centroid``) are stored at ingestion time
+    so the weighted match model (crate/match.py) can turn on their weight
+    with a one-line edit and no shape change.
+    """
+
+    tempo_bpm: float = 0.0
+    tempo_confidence: float = 0.0
+    detected_key: Optional[str] = None
+    # ← detected_key_strength (Krumhansl top1-vs-top2); the weightable
+    # key confidence for the harmony sub-score.
+    key_confidence: float = 0.0
+    duration_s: float = 0.0
+    section_count: int = 0
+    # Meter seam — borrow hardcodes 4/4; storing the real meter lets the
+    # match add a "don't layer 3/4 under 4/4" veto later.
+    time_signature: Tuple[int, int] = (4, 4)
+    energy: float = 0.0  # aggregate RMS
+    energy_profile: Tuple[float, ...] = ()  # per-section, from bar_energies
+    available_stems: Tuple[str, ...] = ()  # ← stems_paths keys
+    instrumentation: Tuple[str, ...] = ()  # detection flags + stem roles
+    # Deferred seams (stored now, weighted later):
+    has_vocals: bool = False
+    loudness_lufs: Optional[float] = None
+    spectral_centroid: Optional[float] = None
+    # Precomputed 12-bin pitch-class histogram (from the chord ribbon) so
+    # search/rank need not re-fold the ribbon on every request.
+    pc_histogram: Tuple[float, ...] = ()
+    # Compact melody summary from the lane; the full note list lives on the
+    # stored analysis blob (result["melody"]).
+    melody_register: Optional[int] = None  # median MIDI pitch
+    melody_confidence: float = 0.0
+
+
+@dataclass(frozen=True)
+class CrateTrack:
+    """One searchable crate catalog row = UNION of source metadata +
+    license record + analyzed features.
+
+    This is NOT a borrow donor "entry" ({id,name,result}); it is the
+    catalog/search shape. The ``crate`` subsystem's ``to_borrow_entry``
+    adapter bridges a CrateTrack to the borrow ranker by pairing it with
+    its stored analysis blob.
+    """
+
+    id: str  # crate-namespaced, e.g. "crate:jamendo:123456"
+    title: str
+    artist: str
+    license: CrateLicenseRecord
+    features: CrateFeatures
+    album: str = ""
+    year: Optional[int] = None
+    # Source metadata (carried in from the platform — the crate's unique
+    # contribution; the analysis pipeline does not compute these):
+    genre: str = ""
+    subgenres: Tuple[str, ...] = ()
+    tags: Tuple[str, ...] = ()
+    mood: str = ""
+    stem_asset_base: str = ""  # R2 key prefix for stems
+    preview_url: Optional[str] = None
+    # Whether the stored analysis carries a persisted performance_graph —
+    # a HARD admission requirement, because the GPU-less prod box can only
+    # render pads from a stored graph.
+    graph_available: bool = False

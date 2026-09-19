@@ -62,6 +62,19 @@ SUBSYSTEMS: dict[str, Set[str]] = {
     # still fails here.
     # (bare package name — the allowlist prefixes ``tone_forge.`` itself)
     "session": {"performance"},
+    # The Vinyl Crate is a shared, curated donor pool that REUSES the borrow
+    # engine by design — a crate track's stored analysis is adapted into a
+    # borrow "entry" and fed to the SAME donor ranker + render/mount path
+    # (``performance.borrow``). It does not reach into borrow's internals
+    # arbitrarily; it calls the same public ranking/DSP primitives a user's
+    # own songs use (``harmonic_compat``, ``_fold_ratio``, ``_transpose_steps``,
+    # ``kit_borrow_job``). The catalog/search DTOs travel through
+    # ``contracts``; this entry records the sanctioned borrow reuse, exactly
+    # like ``session``'s Musical-Graph read above. The real analysis engine
+    # (``unified_pipeline``) is NOT imported here — ingestion injects the
+    # analyzer from ``backend/scripts/ingest_crate.py`` so the crate package
+    # stays a leaf over contracts + borrow.
+    "crate": {"performance"},
     "guidance": set(),
     "notation": set(),
 }

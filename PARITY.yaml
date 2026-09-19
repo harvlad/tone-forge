@@ -378,6 +378,28 @@ features:
         status: na
         note: "No pad surface."
 
+  - id: vinyl-crate
+    name: "Vinyl Crate — shared curated CC-BY/CC0 donor pool: search/browse by metadata + intelligent session match, borrowed via the borrow engine"
+    platforms:
+      web:
+        status: partial
+        evidence: "backend/tone_forge_api.py#get_crate_candidates"
+        note: "Backend shipped and reuses the borrow engine end-to-end. NEW contracts (contracts.py#CrateTrack / CrateFeatures / CrateLicenseRecord / CrateLicense) carry the UNION of source metadata (genre/tags/mood/artist/album/year) + license record (id, url, attribution, content_hash, export_encumbered=true for CC-BY-SA) + Jamn-analyzed features (tempo/key/key_confidence/duration/sections/energy/available_stems/pc_histogram/melody summary). NEW crate/ subsystem: registry.py (shared read-only pool under data/crate/, un-scoped, mtime-cached; to_borrow_entry bridges a CrateTrack to the borrow ranker), search.py#search_crate (faceted genre/tempo/key/Camelot/mood/tags/stems/license + free-text + facet counts), match.py#score_crate (weighted, extensible model over tempo+harmony[harmonic_compat pc-histogram+key]+melody[register/scale/contour from the melody lane]+energy+genre+instrumentation-complementarity, reusing borrow's tempo/harmony/transpose gates; deferred seams groove/timbre/vocal/loudness/chord_prog pre-declared at weight 0), ingest.py (download→license sidecar→analyze→blind-gate→merge→register; analyzer injected via scripts/ingest_crate.py). Three routes: GET /api/crate/search (faceted), GET /api/crate/candidates (session-ranked, superset of borrow-candidates shape), GET /api/crate/{id}/borrow (matched loops through kit_borrow_job + the SamplePack/arrangeBorrowLayout mount path, attribution + licenseId stamped on every pad). Seed/fixture crate (3 tracks CC0/CC-BY/CC-BY-SA) committed under data/crate/ so tests run without a live pull. REMAINING (this row's follow-up): the web \"Crate\" source toggle + faceted browse panel in kit.js#openBorrowPicker."
+      ios:
+        status: partial
+        evidence: "backend/tone_forge/crate/match.py#score_crate"
+        note: "Shared backend match/search/borrow API is live and is the single ranking authority (parity rule 3: no client re-implements scoring). REMAINING: the Crate segmented control + facet controls + fetchCrateCandidates/loadCrateLoops twins in BorrowPickerSheet.swift, each row showing Text(attribution) and an export-locked caption when exportEncumbered (CC-BY obligation). Behaviour must match web bit-for-bit (same backend score, identical facet set)."
+      desktop:
+        status: partial
+        evidence: "backend/tone_forge/crate/search.py#search_crate"
+        note: "Shared backend facets + ranking live. REMAINING: BorrowSource picker + crateCandidates/loadCrateLoops twins + facet/search bar in jam-desktop BorrowPickerView, attribution shown per row and carried onto the pad source label (same SamplePack mount + arrangeBorrowLayout as borrow)."
+      plugin:
+        status: na
+        note: "No Remix/borrow surface in the JUCE editor (same gap as borrow-loops); a crate browser would need loop-pad playback there first."
+      connect:
+        status: na
+        note: "Connect is a monitoring engine with no song/pad surface."
+
   - id: live-arrangement
     name: "Live-capture arrangement — Rec through a song to capture pads-per-section, Play replays hands-free"
     platforms:
