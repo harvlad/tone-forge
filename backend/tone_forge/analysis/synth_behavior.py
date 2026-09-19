@@ -507,6 +507,14 @@ class SynthBehaviorAnalyzer:
                 continue
 
             region_f0 = f0[start:end]
+            # Drop unvoiced frames (f0 == 0): log2(0) = -inf poisons cents_dev,
+            # and an all-unvoiced region yields mean-of-empty-slice → NaN → the
+            # rfft "invalid value" warnings. Guarding here keeps the stored
+            # synth_behavior metric finite (it's a match signal now, not just
+            # a log line).
+            region_f0 = region_f0[region_f0 > 0]
+            if region_f0.size < 20:
+                continue
             median_f0 = np.median(region_f0)
 
             if median_f0 == 0:
