@@ -519,6 +519,15 @@ class PipelineConfig:
             #                               synth-heavy donors
             include_waveform=True,        # per-track viz stored once
             include_profiling=True,       # keep the per-stage breakdown on the pod
+            # Generous stage timeouts: the crate is ingested ONCE and never
+            # re-run, so a slow-but-correct stage (e.g. basic_pitch on CPU when
+            # the pod's onnxruntime can't reach the GPU — ~a few min/stem) MUST
+            # be allowed to finish, never cut to a lower-fidelity fallback. The
+            # timeout only exists to catch a true HANG (which the onnx fail-fast
+            # already prevents), so set it far above any legit compute. "Prefer
+            # slower to get proper full extraction."
+            stage_timeout_s=1200.0,       # 20 min per stage
+            midi_timeout_s=2400.0,        # 40 min for the MIDI ensemble
             stem_serve_url_base="/api/admin/serve-file",
         )
 

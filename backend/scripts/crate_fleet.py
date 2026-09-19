@@ -54,8 +54,10 @@ PODS = int(os.environ.get("CRATE_FLEET_PODS") or N)  # pods to actually create
 GPU_TYPE = "NVIDIA A40"                 # 48GB — the value pick for demucs
 BRANCH = "main"                         # pods clone this ref
 FLEET_PREFIX = "jamn-crate-seed"        # pod name prefix (teardown scans on it)
-WATCHDOG_SEC = 5400                     # per-pod hard cap on the ingest
-POLL_DEADLINE_SEC = 5400               # driver gives up waiting after this
+WATCHDOG_SEC = 10800                    # 3h per-pod cap — generous so a shard of
+#                                         slower CPU-basic_pitch tracks finishes
+#                                         at full fidelity (prefer slow over a cut)
+POLL_DEADLINE_SEC = 10800              # driver waits the full watchdog
 CONCURRENCY = 2                         # per-pod --concurrency (2 demucs at once)
 
 REPO_URL_DEFAULT = "https://github.com/harvlad/tone-forge.git"

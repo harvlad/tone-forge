@@ -170,7 +170,6 @@ python -m pip install -q -r "$REQ" 2>&1 | tail -3 || true
 #   runtime (which LD_LIBRARY_PATH from step 1b makes findable). Best-effort: on
 #   failure the ensemble falls back to pYIN (lower fidelity) but the shard still
 #   completes.
-ORT_CUDA12_INDEX="https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/"
 _ort_cuda_loads() {
   # Exit 0 only if onnxruntime's CUDA EP actually loads for the basic_pitch
   # model (get_providers lists it FIRST), not merely if it's compiled in.
@@ -194,13 +193,22 @@ PY
 if _ort_cuda_loads >/dev/null 2>&1; then
   echo "==> basic_pitch ONNX CUDA EP already loads — no onnxruntime reinstall needed"
 elif command -v nvidia-smi >/dev/null 2>&1; then
-  echo "==> basic_pitch ONNX CUDA EP does NOT load (likely a CUDA-13 wheel on a"
-  echo "    CUDA-12 image) — reinstalling onnxruntime-gpu from the CUDA-12 feed"
+  echo "==> basic_pitch ONNX CUDA EP does NOT load — reinstalling a CUDA-12.6-"
+  echo "    MATCHED onnxruntime-gpu (pinned 1.20.1)"
+  # Canary 4 proved the issue is a MINOR-version mismatch, not just cuDNN path:
+  # the CUDA-12 feed's latest onnxruntime (1.29) is built for CUDA 12.8 and needs
+  # `cudaLibraryGetKernel@libcudart.so.12` from 12.8, which the image's CUDA 12.6
+  # libcudart lacks → "Failed to create CUDAExecutionProvider ... symbol:
+  # cudaLibraryGetKernel". onnxruntime-gpu 1.20.1 (PyPI, PRE the CUDA-13 wheel
+  # flip that landed ~ORT 1.27) is a CUDA-12.x + cuDNN-9 build whose libcudart
+  # symbols all exist in 12.6. Pin it. If it STILL can't reach the GPU the
+  # ensemble runs basic_pitch on CPU — slower but FULL fidelity (the crate's
+  # generous midi_timeout_s lets it finish), never a pYIN downgrade.
   python -m pip uninstall -y onnxruntime onnxruntime-gpu tensorflow >/dev/null 2>&1 || true
   { python -m pip install --no-deps basic-pitch \
       && python -m pip install mir_eval resampy \
-      && python -m pip install --index-url "$ORT_CUDA12_INDEX" onnxruntime-gpu; } 2>&1 | tail -3 \
-    || echo "onnxruntime-gpu(cuda12) install skipped (pYIN fallback stays in effect)"
+      && python -m pip install "onnxruntime-gpu==1.20.1"; } 2>&1 | tail -3 \
+    || echo "onnxruntime-gpu(1.20.1) install skipped (CPU basic_pitch stays in effect)"
   if _ort_cuda_loads >/dev/null 2>&1; then
     echo "==> CUDA-12 onnxruntime-gpu now loads the CUDA EP"
   else
