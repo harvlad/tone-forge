@@ -64,6 +64,11 @@ SUBSYSTEMS: dict[str, Set[str]] = {
     "session": {"performance"},
     "guidance": set(),
     "notation": set(),
+    # Pluggable Songs-page catalogs. Maps every source into the one
+    # contracts.SourceTrack row shape; imports contracts and nothing
+    # else. The composition point injects already-scoped dicts, so this
+    # package never reaches for history/job/auth internals.
+    "sources": set(),
 }
 
 # Every subsystem may import these directly.

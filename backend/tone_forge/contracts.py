@@ -60,6 +60,12 @@ __all__ = [
     "TransportState",
     "GuidanceTrack",
     "SessionBundle",
+    # Unified Songs page (pluggable music sources)
+    "SourceId",
+    "TrackStatus",
+    "SourceTrack",
+    "FacetBucket",
+    "SearchPage",
     # Re-exports for convenience
     "Stem",
 ]
@@ -688,3 +694,112 @@ class SessionBundle:
     # legacy bundle construction and old clients unchanged; when
     # present, ``guidance.note_highway`` mirrors ``melody.notes``.
     melody: Optional[MelodySequence] = None
+
+
+# ---------------------------------------------------------------------------
+# Unified Songs page — pluggable music sources
+#
+# The Songs table is the UNION of every catalog behind one row shape.
+# MVP wires only the user's own library (analyzed history + in-flight
+# jobs); ``SourceId`` declares the later seams (Vinyl Crate + external CC
+# catalogs + on-device import) now so the ``/api/library/search`` shell
+# is source-agnostic from day one. These are additive and touch no
+# existing DTO — a parallel Crate build appends its own rows alongside.
+# ---------------------------------------------------------------------------
+
+
+class SourceId(str, Enum):
+    """Which catalog a :class:`SourceTrack` came from.
+
+    Only ``LIBRARY`` is implemented this pass. The rest are declared
+    seams — the composition point rejects a search against an
+    unimplemented source rather than pretend it exists.
+    """
+
+    LIBRARY = "library"      # the signed-in user's analyzed history + jobs
+    CRATE = "crate"          # Vinyl Crate shared CC-BY donor pool (seam)
+    JAMENDO = "jamendo"      # external CC catalog (seam)
+    CCMIXTER = "ccmixter"    # external CC catalog (seam)
+    DEVICE = "device"        # on-device / local file import (seam)
+
+
+class TrackStatus(str, Enum):
+    """Lifecycle of a row in the Songs table.
+
+    Mirrors the analysis-job lifecycle so a finished analysis and an
+    in-flight upload share one row shape. ``DONE`` rows come from
+    history; ``QUEUED``/``RUNNING``/``ERROR`` come from the job registry
+    until a completing job COLLAPSES into its resulting history row.
+    This is why the Band Room stops being a destination and becomes a
+    status column + a "Processing" filter.
+    """
+
+    DONE = "done"
+    QUEUED = "queued"
+    RUNNING = "running"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class SourceTrack:
+    """One row in the unified Songs table — the single shape *every*
+    source returns, whatever catalog it came from.
+
+    Provenance fields (``license``/``license_url``/``attribution``/
+    ``source_url``) are empty for user-owned uploads and only populated
+    by curated CC imports. Lifecycle fields (``status``/``progress``/
+    ``history_id``) let one row carry both "finished" and "still
+    processing" so the queue folds into a column. ``progress`` is in
+    ``[0, 1]``. ``created_at_s`` is epoch seconds — carried (not shown)
+    so ``recent`` ordering and the opaque cursor boundary stay stable
+    across heterogeneous sources.
+    """
+
+    source: SourceId
+    source_ref: str  # source-unique id; the table's stable row key
+    title: str
+    artist: Optional[str] = None
+    key: Optional[str] = None
+    tempo_bpm: Optional[float] = None
+    duration_s: Optional[float] = None
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    tags: Tuple[str, ...] = ()
+    # Provenance
+    license: Optional[str] = None
+    license_url: Optional[str] = None
+    attribution: Optional[str] = None
+    source_url: Optional[str] = None
+    # Lifecycle
+    status: TrackStatus = TrackStatus.DONE
+    progress: float = 1.0
+    history_id: Optional[str] = None
+    artwork_ref: Optional[str] = None
+    # Ordering key (epoch seconds). Not user-visible.
+    created_at_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class FacetBucket:
+    """One selectable filter value and how many rows carry it."""
+
+    value: str
+    count: int
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    """One page of Songs-table results.
+
+    ``next_cursor`` is an OPAQUE token: resume the query strictly after
+    the last row's ``(sort-value, source_ref)`` boundary, never by
+    offset, so a background ingest inserting a row cannot shift the
+    window. ``facets`` maps a facet name (``genre``/``key``/``mood``/
+    ``status``) to its available buckets over the query-filtered set,
+    for building the filter chips. ``total`` is the filtered row count.
+    """
+
+    tracks: Tuple[SourceTrack, ...]
+    next_cursor: Optional[str] = None
+    facets: Dict[str, Tuple[FacetBucket, ...]] = field(default_factory=dict)
+    total: int = 0

@@ -4754,6 +4754,13 @@ _HISTORY_LIST_FIELDS = (
     # old entries project the same rows as before.
     "artist",
     "license",
+    # Songs page facets: already computed during analysis, projected
+    # into list rows so the unified table can filter/sort without the
+    # heavy result blob. Only present on entries that carry them — old
+    # entries project the same rows as before.
+    "genre",
+    "mood",
+    "tags",
     # Featured pin (TONEFORGE_FEATURED_QUERY): stamped per-request, never
     # persisted — absent unless the env gate is set.
     "featured",
@@ -5228,6 +5235,198 @@ async def save_to_history(request: Request) -> JSONResponse:
     }, full_result=result)
 
     return JSONResponse({"id": entry["id"], "status": "saved"})
+
+
+# ---------------------------------------------------------------------------
+# Unified Songs page — /api/library/* (ADDITIVE)
+#
+# The Songs table is the UNION of analyzed history + in-flight jobs behind
+# one row shape (contracts.SourceTrack), so the Band Room queue folds into
+# a status column instead of being a separate destination. This is the
+# single composition point (rule 2): it scopes the two lists to the caller
+# and hands already-scoped dicts to tone_forge.sources.LibrarySource, which
+# owns the union/collapse/facet/sort/cursor logic. /api/history/{id} is
+# untouched — only the LIST shape is superseded.
+#
+# Kept strictly additive + separated from a parallel /api/crate/* build.
+# ---------------------------------------------------------------------------
+
+
+async def _library_scoped_history(request: Request, scope: Optional[str]) -> list[dict]:
+    """History rows visible to this caller, mirroring the /api/history
+    ``scope=mine`` owner gate exactly (the security-critical path).
+
+    ``scope="mine"`` is what the Songs page sends: only the signed-in
+    user's own analyses, with the same demo fallback and the same
+    SHARED_LIBRARY testing cross-show. Any other scope returns the full
+    library unchanged (dev/default), matching /api/history's default.
+    """
+    history = _load_history()
+    if scope != "mine":
+        return history
+
+    from tone_forge.auth.deps import current_user
+
+    def _demo_entry():
+        demo_id = (os.environ.get("TONEFORGE_DEMO_ENTRY_ID") or "").strip()
+        if not demo_id:
+            return None
+        for entry in history:
+            if entry.get("id") == demo_id:
+                demo = dict(entry)
+                demo["demo"] = True
+                return demo
+        return None
+
+    user = await current_user(request)
+    if user is None:
+        demo = _demo_entry()
+        if demo is None:
+            raise HTTPException(status_code=401, detail="Sign in required")
+        return [demo]
+
+    device_id = (request.headers.get("x-device-id") or "").strip()
+    if _shared_library_enabled():
+        # TESTING PHASE ONLY (TONEFORGE_SHARED_LIBRARY=1): signed-in
+        # accounts see the whole library, own songs first. Reads only —
+        # the owner gate below still governs delete. MUST be unset before
+        # public launch (copyright).
+        def _is_mine(entry: dict) -> bool:
+            return (entry.get("owner_id") == user.id
+                    or bool(device_id and entry.get("device_id") == device_id))
+
+        return (
+            [e for e in history if _is_mine(e)]
+            + [e for e in history if not _is_mine(e)]
+        )
+
+    mine = [
+        entry for entry in history
+        if entry.get("owner_id") == user.id
+        or (device_id and entry.get("device_id") == device_id)
+    ]
+    if not mine:
+        demo = _demo_entry()
+        if demo is not None:
+            mine = [demo]
+    return mine
+
+
+async def _library_scoped_jobs(request: Request) -> list[dict]:
+    """In-flight jobs visible to this caller (same scoping as /api/jobs).
+
+    Jobs are inherently per-caller — never cross-shown, even under
+    SHARED_LIBRARY. Each dict carries the job's ``meta`` (attribution)
+    alongside its public fields so LibrarySource can title an in-flight
+    row before it has a history entry.
+    """
+    device_id, owner_id = await _request_ownership(request)
+    if not device_id and not owner_id:
+        return []
+    rows: list[dict] = []
+    for j in _JOBS.all():
+        if (device_id and j.device_id == device_id) or (owner_id and j.owner_id == owner_id):
+            row = j.public_dict()
+            row["meta"] = j.meta or {}
+            rows.append(row)
+    return rows
+
+
+def _resolve_source(source: str, history_fn, jobs_fn):
+    """Map a ``source`` id to its MusicSource. Only LIBRARY is wired this
+    pass — an unimplemented source is a 400, never a silent empty page,
+    so a client bug (or a not-yet-built Crate) is visible."""
+    from tone_forge.contracts import SourceId
+    from tone_forge.sources import LibrarySource
+
+    try:
+        source_id = SourceId(source)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown source: {source}")
+    if source_id == SourceId.LIBRARY:
+        return LibrarySource(history_fn, jobs_fn)
+    raise HTTPException(
+        status_code=400,
+        detail=f"Source '{source}' is not available yet",
+    )
+
+
+@app.get("/api/library/search")
+async def library_search(
+    request: Request,
+    source: str = Query("library", description="Catalog id (only 'library' this pass)."),
+    q: Optional[str] = Query(None, description="Free-text search."),
+    genre: Optional[str] = Query(None),
+    key: Optional[str] = Query(None),
+    tempo_min: Optional[float] = Query(None),
+    tempo_max: Optional[float] = Query(None),
+    mood: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None, description="Comma-separated; row must carry all."),
+    status: Optional[str] = Query(None, description="done|queued|running|error."),
+    sort: str = Query("recent", description="recent|title|tempo|key."),
+    cursor: Optional[str] = Query(None, description="Opaque page cursor."),
+    limit: int = Query(50, ge=1, le=100),
+    scope: Optional[str] = Query(
+        None,
+        description='"mine" = only the signed-in user\'s library (the '
+        "Songs page default). Preserves the /api/history owner gate.",
+    ),
+) -> JSONResponse:
+    """Unified Songs table: history ∪ in-flight jobs as one searchable,
+    filterable, sortable, cursor-paged list. A completing job collapses
+    into its resulting history row (keyed by history_id), so this one
+    surface replaces both the Recent Songs list and the Band Room."""
+    # Snapshot both lists ONCE per request, scoped to the caller, then
+    # feed them to LibrarySource as providers. Snapshotting (rather than
+    # re-reading) keeps the union/facets/sort consistent within a page.
+    history_rows = await _library_scoped_history(request, scope)
+    job_rows = await _library_scoped_jobs(request)
+    src = _resolve_source(source, lambda: history_rows, lambda: job_rows)
+
+    facet_sel = {
+        "genre": genre,
+        "key": key,
+        "mood": mood,
+        "tempo_min": tempo_min,
+        "tempo_max": tempo_max,
+        "tags": tags,
+        "status": status,
+    }
+    page = src.search(query=q, facets=facet_sel, sort=sort, cursor=cursor, limit=limit)
+    payload = {
+        "source": source,
+        "tracks": [asdict(t) for t in page.tracks],
+        "next_cursor": page.next_cursor,
+        "facets": {
+            name: [asdict(b) for b in buckets]
+            for name, buckets in page.facets.items()
+        },
+        "total": page.total,
+    }
+    return JSONResponse(_convert_numpy_types(payload))
+
+
+@app.post("/api/library/ingest")
+async def library_ingest(request: Request) -> JSONResponse:
+    """The ONE ingest door — dedupe / no-op for the library source.
+
+    ``{source, source_ref}`` -> ``{job_id | history_id}``. For the
+    library source this is a dedupe / no-op: a track already analyzed is
+    reused (its ``history_id`` returned) rather than re-queued, so
+    re-adding an already-known song opens the existing row instead of
+    duplicating work. Dedupe is by history id — see LibrarySource.ingest
+    for why content-hash reuse is not wired today. Other sources will
+    override ingest to actually queue an analysis job behind this same
+    door."""
+    body = await request.json()
+    source = (body.get("source") or "library").strip()
+    source_ref = (body.get("source_ref") or "").strip()
+
+    history_rows = await _library_scoped_history(request, "mine")
+    job_rows = await _library_scoped_jobs(request)
+    src = _resolve_source(source, lambda: history_rows, lambda: job_rows)
+    result = src.ingest(source_ref)
+    return JSONResponse(_convert_numpy_types({"source": source, **result}))
 
 
 @app.get("/api/history/{entry_id}")
