@@ -4794,6 +4794,45 @@
       pop: null, // { el, onKey, onDown } when the picker is open
       bodyEl: null, // the candidate-list container inside the popover
       partBtns: null, // stem → segmented button, for the is-on highlight
+      srcBtns: null, // source toggle buttons: "My songs" | "Crate"
+      titleEl: null, // popover title, retitled per source
+      crate: freshCrateState(), // Vinyl Crate sub-state (shared CC donor pool)
+    };
+  }
+
+  // Vinyl Crate — a shared, curated, read-only pool of legally-clean CC-BY/CC0
+  // tracks that everyone can borrow from (the borrow engine's donor pool, but
+  // global instead of your-own-library). Two orthogonal entry points into the
+  // same catalog: session-MATCHED suggestions (GET /api/crate/candidates,
+  // ranked by tempo/harmony/melody/energy/genre/instrumentation) and
+  // faceted BROWSE (GET /api/crate/search — genre/tempo/key/mood/tags). A pick
+  // renders matched loops via GET /api/crate/{id}/borrow, mounted onto the pads
+  // through the same mountManifest path as an owned-song borrow. Attribution
+  // (title — artist · CC license) rides every crate row — a CC-BY obligation.
+  function freshCrateState() {
+    return {
+      source: "songs", // "songs" (owned library) | "crate" (shared pool)
+      mode: "match", // crate view: "match" (session-ranked) | "browse" (facets)
+      genreMode: "similar", // "similar" | "contrast" — genre affinity direction
+      sort: "relevance", // browse sort
+      query: "", // free-text browse query
+      facets: {
+        genre: "", mood: "", tags: "",
+        tempoMin: "", tempoMax: "",
+        key: "", camelot: "",
+        stems: "", hasVocals: false,
+        license: "", cleanExport: false,
+        durationMin: "", durationMax: "",
+      },
+      // Session-matched suggestions.
+      matchLoaded: false, matchLoading: false, matchUnavailable: false,
+      matchCandidates: [],
+      // Faceted browse.
+      browseLoaded: false, browseLoading: false, browseUnavailable: false,
+      browseTracks: [], browseTotal: 0, facetCounts: null,
+      busyTrack: null, // crate track id whose borrow-load is in flight
+      controlsEl: null, chipsEl: null, searchInput: null, // live DOM refs
+      _searchTimer: null, // debounce handle for free-text search
     };
   }
 
@@ -4820,6 +4859,17 @@
     b.pop = null;
     b.bodyEl = null;
     b.partBtns = null;
+    if (b.crate) {
+      // Drop stale DOM refs; the crate state (source/mode/facets/results)
+      // survives so re-opening restores the last crate view.
+      b.crate.controlsEl = null;
+      b.crate.chipsEl = null;
+      b.crate.searchInput = null;
+      if (b.crate._searchTimer) {
+        try { clearTimeout(b.crate._searchTimer); } catch (_) {}
+        b.crate._searchTimer = null;
+      }
+    }
     try {
       document.removeEventListener("keydown", pop.onKey, true);
       document.removeEventListener("pointerdown", pop.onDown, true);
@@ -4851,6 +4901,7 @@
     var title = document.createElement("span");
     title.className = "kit-borrow-title";
     title.textContent = "Add from another song";
+    b.titleEl = title;
     var close = document.createElement("button");
     close.type = "button";
     close.className = "kit-borrow-close";
@@ -4861,8 +4912,29 @@
     head.appendChild(close);
     pop.appendChild(head);
 
+    // Source toggle — borrow from your OWN analyzed songs, or the shared
+    // Vinyl Crate (curated CC-BY/CC0 pool everyone can dig). Default "songs"
+    // so the picker behaves exactly as before until the user opts into the
+    // crate.
+    var srcSeg = document.createElement("div");
+    srcSeg.className = "kit-borrow-src";
+    srcSeg.setAttribute("role", "group");
+    srcSeg.title = "Borrow from your own songs, or the shared Vinyl Crate";
+    b.srcBtns = {};
+    [["songs", "My songs"], ["crate", "Crate"]].forEach(function (pr) {
+      var sb = document.createElement("button");
+      sb.type = "button";
+      sb.className = "kit-borrow-srcbtn" + (pr[0] === b.crate.source ? " is-on" : "");
+      sb.textContent = pr[1];
+      sb.addEventListener("click", function () { setCrateSource(s, pr[0]); });
+      b.srcBtns[pr[0]] = sb;
+      srcSeg.appendChild(sb);
+    });
+    pop.appendChild(srcSeg);
+
     // Part selector — Beat / Bass / Chords / Melody (segmented, like the
-    // remix.js stem picker).
+    // remix.js stem picker). Shared by both sources: which stem to borrow
+    // (owned song or crate track).
     var parts = document.createElement("div");
     parts.className = "kit-borrow-parts";
     parts.setAttribute("role", "group");
@@ -4874,7 +4946,8 @@
       pb.className = "kit-borrow-part" + (pr[0] === b.stem ? " is-on" : "");
       pb.textContent = pr[1];
       pb.addEventListener("click", function () {
-        if (b.stem === pr[0] || b.busyDonor) return;
+        var busy = b.busyDonor || (b.crate && b.crate.busyTrack);
+        if (b.stem === pr[0] || busy) return;
         b.stem = pr[0];
         b.loaded = false;
         b.candidates = [];
@@ -4882,12 +4955,20 @@
         for (var k in b.partBtns) {
           b.partBtns[k].classList.toggle("is-on", k === b.stem);
         }
-        loadBorrowCandidates(s);
+        onBorrowPartChange(s);
       });
       b.partBtns[pr[0]] = pb;
       parts.appendChild(pb);
     });
     pop.appendChild(parts);
+
+    // Crate-only controls (sub-mode toggle + genre affinity / facet form).
+    // Empty and hidden in "songs" mode; populated by renderCrateControls.
+    var crateCtrls = document.createElement("div");
+    crateCtrls.className = "kit-crate-ctrls";
+    crateCtrls.hidden = true;
+    b.crate.controlsEl = crateCtrls;
+    pop.appendChild(crateCtrls);
 
     var body = document.createElement("div");
     body.className = "kit-borrow-body";
@@ -4925,8 +5006,24 @@
     b.pop = { el: pop, onKey: onKey, onDown: onDown };
     if (s.borrowBtn) s.borrowBtn.classList.add("is-open");
 
+    applyCrateSourceUi(s);
+    renderCrateControls(s);
     renderBorrowBody(s);
-    if (!b.loaded && !b.loading) loadBorrowCandidates(s);
+    if (b.crate.source === "crate") ensureCrateLoaded(s);
+    else if (!b.loaded && !b.loading) loadBorrowCandidates(s);
+  }
+
+  /** Reload the correct list when the shared Part (stem) changes — owned-song
+   * candidates, or crate session-match candidates. In crate BROWSE the stem
+   * only governs what a pick renders, so just repaint. */
+  function onBorrowPartChange(s) {
+    var b = s.borrow;
+    if (b.crate && b.crate.source === "crate") {
+      if (b.crate.mode === "match") loadCrateCandidates(s);
+      else renderBorrowBody(s);
+      return;
+    }
+    loadBorrowCandidates(s);
   }
 
   /** Fetch ranked donor songs for the selected Part. 404 → the endpoint isn't
@@ -4965,6 +5062,8 @@
    * empties, or one row per donor song. */
   function renderBorrowBody(s) {
     var b = s.borrow;
+    // Crate source paints its own body (match list or browse grid).
+    if (b.crate && b.crate.source === "crate") { renderCrateBody(s); return; }
     var body = b.bodyEl;
     if (!body) return;
     body.innerHTML = "";
@@ -5102,6 +5201,682 @@
     return fetch(url).then(function (r) {
       if (r.status === 404) throw new Error("borrowing not available");
       if (!r.ok) throw new Error("borrow HTTP " + r.status);
+      return r.json();
+    }).then(function (manifest) { mountManifest(manifest); });
+  }
+
+  // ---------- Vinyl Crate — shared CC donor pool (search + session match) ----------
+  //
+  // Pure helpers (exposed on _internals for the DOM-free smoke test) come first;
+  // the DOM/fetch layer that drives the picker follows. The backend contract:
+  //   GET /api/crate/candidates?session_id&stem&genre_mode&<facets>  session-ranked
+  //   GET /api/crate/search?q&genre&tempo_min&…&key&camelot&…         faceted browse
+  //   GET /api/crate/{id}/borrow?session_id&stem&target_bpm&target_key  render loops
+  // A CrateTrack row is the UNION of SOURCE metadata (genre/mood/tags/artist)
+  // and Jamn-analyzed features (tempo/key/stems), plus a CC license record.
+
+  // Camelot wheel — pitch-class (C=0…B=11) → wheel NUMBER, split by quality.
+  // The letter is A for minor, B for major (so A minor = 8A, C major = 8B, and
+  // relative major/minor share a number). Pure so search facets and row display
+  // agree with the backend's key-compat neighborhood.
+  var CRATE_CAMELOT_MAJOR = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1];
+  var CRATE_CAMELOT_MINOR = [5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10];
+
+  function keyToCamelot(keyStr) {
+    var raw = String(keyStr == null ? "" : keyStr).trim();
+    // parseKey defaults garbage to C major, so gate on a real note letter
+    // first — otherwise "?" would masquerade as 8B.
+    if (!raw || !/^[A-Ga-g]/.test(raw)) return "";
+    var p = parseKey(raw);
+    var pc = KEY_ROOTS.indexOf(p.root);
+    if (pc < 0) return "";
+    var num = p.quality === "minor" ? CRATE_CAMELOT_MINOR[pc] : CRATE_CAMELOT_MAJOR[pc];
+    return num + (p.quality === "minor" ? "A" : "B");
+  }
+
+  // ShareAlike (BY-SA) is copyleft — a BY-SA loop in an exported remix forces
+  // the whole export to BY-SA. The contract carries an explicit
+  // `export_encumbered` boolean; when it's absent we derive it from the id so
+  // the UI badge always errs toward warning.
+  function crateLicenseIsShareAlike(licenseId) {
+    return /BY-?SA/i.test(String(licenseId == null ? "" : licenseId));
+  }
+
+  // License id → short human label for the attribution line.
+  function crateLicenseLabel(licenseId) {
+    var id = String(licenseId == null ? "" : licenseId).trim();
+    if (!id) return "";
+    var u = id.toUpperCase().replace(/\s+/g, "");
+    if (u === "CC0" || u.indexOf("CC0") === 0) return "CC0";
+    var four = /4\.0/.test(u);
+    if (/BY-?SA/.test(u)) return four ? "CC-BY-SA 4.0" : "CC-BY-SA";
+    if (/BY/.test(u)) return four ? "CC-BY 4.0" : "CC-BY";
+    return id;
+  }
+
+  // First present (non-null/undefined) value among candidate keys.
+  function crateField(obj, names) {
+    if (!obj || typeof obj !== "object") return undefined;
+    for (var i = 0; i < names.length; i++) {
+      var v = obj[names[i]];
+      if (v !== undefined && v !== null) return v;
+    }
+    return undefined;
+  }
+
+  // Coerce a comma-string or array into a clean string array.
+  function crateStrArray(v) {
+    if (Array.isArray(v)) {
+      return v.map(function (x) { return String(x).trim(); }).filter(Boolean);
+    }
+    if (typeof v === "string" && v) {
+      return v.split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+    }
+    return [];
+  }
+
+  // Normalize a raw crate row (search track OR match candidate) into one flat
+  // shape the UI reads, tolerant of BOTH snake_case DTO serialization and
+  // camelCase, and of nested (`features`/`license`) OR flattened payloads.
+  // Returns null for a row with no usable id so bad rows drop out of a list.
+  function normalizeCrateTrack(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    var feat = (raw.features && typeof raw.features === "object") ? raw.features : {};
+    var lic = (raw.license && typeof raw.license === "object") ? raw.license : {};
+    var fx = function (names) {
+      var v = crateField(feat, names);
+      return v !== undefined ? v : crateField(raw, names);
+    };
+    var lx = function (names) {
+      var v = crateField(lic, names);
+      return v !== undefined ? v : crateField(raw, names);
+    };
+
+    var id = crateField(raw, ["id", "trackId", "crateId"]);
+    if (id === undefined || id === null || id === "") return null;
+    id = String(id);
+
+    var num = function (v) { var n = Number(v); return isFinite(n) ? n : null; };
+    var str = function (v) { return v == null ? "" : String(v); };
+
+    var licenseId = lx(["license_id", "licenseId", "license"]);
+    if (licenseId && typeof licenseId === "object") {
+      licenseId = crateField(licenseId, ["license_id", "licenseId"]);
+    }
+    licenseId = str(licenseId);
+
+    var enc = lx(["export_encumbered", "exportEncumbered"]);
+    var exportEncumbered = typeof enc === "boolean"
+      ? enc : crateLicenseIsShareAlike(licenseId);
+
+    var key = str(fx(["detected_key", "detectedKey", "key"]));
+    var camelot = keyToCamelot(key);
+    var tempo = num(fx(["tempo_bpm", "tempoBpm", "tempo"])) || 0;
+
+    return {
+      id: id,
+      title: str(crateField(raw, ["title", "name"])),
+      artist: str(crateField(raw, ["artist"])),
+      album: str(crateField(raw, ["album"])),
+      year: num(crateField(raw, ["year"])),
+      genre: str(crateField(raw, ["genre"])),
+      subgenres: crateStrArray(crateField(raw, ["subgenres"])),
+      tags: crateStrArray(crateField(raw, ["tags"])),
+      mood: str(crateField(raw, ["mood"])),
+      licenseId: licenseId,
+      licenseUrl: str(lx(["license_url", "licenseUrl"])),
+      sourceUrl: str(lx(["source_url", "sourceUrl"])),
+      source: str(lx(["source"])),
+      attribution: str(lx(["attribution"])),
+      exportEncumbered: exportEncumbered,
+      tempo: tempo,
+      key: key,
+      camelot: camelot,
+      durationS: num(fx(["duration_s", "durationS", "duration"])) || 0,
+      sectionCount: num(fx(["section_count", "sectionCount"])) || 0,
+      stems: crateStrArray(fx(["available_stems", "availableStems", "stems"])),
+      hasVocals: !!fx(["has_vocals", "hasVocals"]),
+      energy: num(fx(["energy"])),
+      graphAvailable: !!crateField(raw, ["graph_available", "graphAvailable"]),
+      // Match-only extras (present on /candidates rows).
+      matchScore: num(crateField(raw, ["matchScore", "match_score", "score"])),
+      harmonic: num(crateField(raw, ["harmonic"])),
+      tempoDistance: num(crateField(raw, ["tempoDistance", "tempo_distance"])),
+    };
+  }
+
+  // The required CC-BY credit, shown wherever a crate track appears. Prefer the
+  // backend's ready-to-display attribution (the legally-vetted string); else
+  // compose "Title — Artist · CC-BY 4.0".
+  function crateAttribution(track) {
+    if (!track) return "";
+    if (track.attribution) return String(track.attribution);
+    var base = track.title || "Untitled";
+    if (track.artist) base += " — " + track.artist;
+    var label = crateLicenseLabel(track.licenseId);
+    return label ? base + " · " + label : base;
+  }
+
+  // A short match-strength hint from the weighted matchScore; falls back to the
+  // harmonic bands (borrow's "key match"/"fits") when only harmony is present.
+  function crateMatchHint(track) {
+    var m = track && typeof track.matchScore === "number" ? track.matchScore : null;
+    if (m === null) {
+      var h = track && typeof track.harmonic === "number" ? track.harmonic : null;
+      if (h === null) return "";
+      if (h >= 0.9) return "key match";
+      if (h >= 0.75) return "fits";
+      return "";
+    }
+    if (m >= 0.8) return "great match";
+    if (m >= 0.6) return "good match";
+    if (m >= 0.4) return "fair match";
+    return "";
+  }
+
+  // The middot-joined meta line: tempo · Camelot+key · genre/mood.
+  function crateMetaLine(track) {
+    if (!track) return "";
+    var parts = [];
+    if (track.tempo) parts.push(Math.round(track.tempo) + " bpm");
+    if (track.key) parts.push(track.camelot ? (track.camelot + " " + track.key) : track.key);
+    else if (track.camelot) parts.push(track.camelot);
+    if (track.genre) parts.push(track.genre);
+    else if (track.mood) parts.push(track.mood);
+    return parts.join(" · ");
+  }
+
+  // Object → URL query string: skips undefined/null/""/false, joins arrays by
+  // comma, maps true → "1". Deterministic (insertion order) so it's testable.
+  function crateQueryString(params) {
+    var parts = [];
+    Object.keys(params || {}).forEach(function (k) {
+      var v = params[k];
+      if (v === undefined || v === null || v === "" || v === false) return;
+      if (Array.isArray(v)) { if (!v.length) return; v = v.join(","); }
+      if (v === true) v = "1";
+      parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
+    });
+    return parts.join("&");
+  }
+
+  function crateCandidatesUrl(sessionId, stem, c) {
+    var f = c.facets;
+    var qs = crateQueryString({
+      session_id: sessionId || "",
+      stem: stem,
+      genre_mode: c.genreMode,
+      genre: f.genre,
+      mood: f.mood,
+      key: f.key,
+      camelot: f.camelot || (f.key ? keyToCamelot(f.key) : ""),
+      clean_export: f.cleanExport,
+      has_vocals: f.hasVocals,
+      limit: 12,
+    });
+    // sessionTargetParams() returns a leading-& fragment (or "") — the session
+    // key/tempo conform target, shared with the owned-song borrow path.
+    return "/api/crate/candidates?" + qs + sessionTargetParams();
+  }
+
+  function crateSearchUrl(c) {
+    var f = c.facets;
+    var qs = crateQueryString({
+      q: c.query,
+      genre: f.genre,
+      tags: f.tags,
+      mood: f.mood,
+      tempo_min: f.tempoMin,
+      tempo_max: f.tempoMax,
+      key: f.key,
+      camelot: f.camelot || (f.key ? keyToCamelot(f.key) : ""),
+      stems: f.stems,
+      has_vocals: f.hasVocals,
+      license: f.license,
+      clean_export: f.cleanExport,
+      duration_min: f.durationMin,
+      duration_max: f.durationMax,
+      sort: c.sort,
+      limit: 24,
+      offset: 0,
+    });
+    return "/api/crate/search?" + qs;
+  }
+
+  // ---- crate DOM layer ----
+
+  function applyCrateSourceUi(s) {
+    var b = s.borrow, c = b.crate;
+    if (b.titleEl) {
+      b.titleEl.textContent = c.source === "crate" ? "Vinyl Crate" : "Add from another song";
+    }
+    if (b.pop && b.pop.el) b.pop.el.classList.toggle("is-crate", c.source === "crate");
+  }
+
+  function setCrateSource(s, source) {
+    var b = s.borrow, c = b.crate;
+    if (c.source === source) return;
+    c.source = source;
+    for (var k in b.srcBtns) b.srcBtns[k].classList.toggle("is-on", k === source);
+    applyCrateSourceUi(s);
+    renderCrateControls(s);
+    renderBorrowBody(s);
+    if (source === "crate") ensureCrateLoaded(s);
+    else if (!b.loaded && !b.loading) loadBorrowCandidates(s);
+  }
+
+  function setCrateMode(s, mode) {
+    var c = s.borrow.crate;
+    if (c.mode === mode) return;
+    c.mode = mode;
+    renderCrateControls(s);
+    renderBorrowBody(s);
+    ensureCrateLoaded(s);
+  }
+
+  // Fetch the active crate view once when it's first shown (idempotent — a
+  // cached result isn't refetched on reopen or a mode flip-back).
+  function ensureCrateLoaded(s) {
+    var c = s.borrow.crate;
+    if (c.mode === "browse") {
+      if (!c.browseLoaded && !c.browseLoading) loadCrateSearch(s);
+    } else if (!c.matchLoaded && !c.matchLoading) {
+      loadCrateCandidates(s);
+    }
+  }
+
+  // Build the crate sub-mode toggle + (match) genre affinity / (browse) facets.
+  function renderCrateControls(s) {
+    var b = s.borrow, c = b.crate, host = c.controlsEl;
+    if (!host) return;
+    host.innerHTML = "";
+    if (c.source !== "crate") { host.hidden = true; return; }
+    host.hidden = false;
+
+    var seg = document.createElement("div");
+    seg.className = "kit-crate-mode";
+    seg.setAttribute("role", "group");
+    [["match", "For your session"], ["browse", "Browse crate"]].forEach(function (pr) {
+      var mb = document.createElement("button");
+      mb.type = "button";
+      mb.className = "kit-crate-modebtn" + (pr[0] === c.mode ? " is-on" : "");
+      mb.textContent = pr[1];
+      mb.addEventListener("click", function () { setCrateMode(s, pr[0]); });
+      seg.appendChild(mb);
+    });
+    host.appendChild(seg);
+
+    if (c.mode === "match") host.appendChild(buildCrateGenreMode(s));
+    else host.appendChild(buildCrateFacets(s));
+  }
+
+  // Similar | Contrast — genre affinity direction for the session match.
+  function buildCrateGenreMode(s) {
+    var c = s.borrow.crate;
+    var wrap = document.createElement("div");
+    wrap.className = "kit-crate-genremode";
+    var lab = document.createElement("span");
+    lab.className = "kit-crate-flabel";
+    lab.textContent = "Genre";
+    wrap.appendChild(lab);
+    [["similar", "Similar"], ["contrast", "Contrast"]].forEach(function (pr) {
+      var gb = document.createElement("button");
+      gb.type = "button";
+      gb.className = "kit-crate-chip" + (pr[0] === c.genreMode ? " is-on" : "");
+      gb.textContent = pr[1];
+      gb.addEventListener("click", function () {
+        if (c.genreMode === pr[0]) return;
+        c.genreMode = pr[0];
+        renderCrateControls(s);
+        loadCrateCandidates(s);
+      });
+      wrap.appendChild(gb);
+    });
+    return wrap;
+  }
+
+  // The browse filter form: free-text + key/tempo range + clean-export/vocals,
+  // plus a live facet-count chip strip (genre/mood) refreshed after each search.
+  function buildCrateFacets(s) {
+    var c = s.borrow.crate, f = c.facets;
+    var wrap = document.createElement("div");
+    wrap.className = "kit-crate-facets";
+
+    var q = document.createElement("input");
+    q.type = "search";
+    q.className = "kit-crate-q";
+    q.placeholder = "Search title, artist, tags…";
+    q.value = c.query;
+    q.addEventListener("input", function () { c.query = q.value; scheduleCrateSearch(s); });
+    c.searchInput = q;
+    wrap.appendChild(q);
+
+    var grid = document.createElement("div");
+    grid.className = "kit-crate-fgrid";
+    grid.appendChild(crateTextField("Key", f.key, function (v) {
+      f.key = v; f.camelot = ""; scheduleCrateSearch(s);
+    }));
+    grid.appendChild(crateNumField("BPM ≥", f.tempoMin, function (v) {
+      f.tempoMin = v; scheduleCrateSearch(s);
+    }));
+    grid.appendChild(crateNumField("BPM ≤", f.tempoMax, function (v) {
+      f.tempoMax = v; scheduleCrateSearch(s);
+    }));
+    wrap.appendChild(grid);
+
+    var checks = document.createElement("div");
+    checks.className = "kit-crate-checks";
+    checks.appendChild(crateCheckField("Clean export only", f.cleanExport, function (v) {
+      f.cleanExport = v; scheduleCrateSearch(s);
+    }));
+    checks.appendChild(crateCheckField("Has vocals", f.hasVocals, function (v) {
+      f.hasVocals = v; scheduleCrateSearch(s);
+    }));
+    wrap.appendChild(checks);
+
+    var chips = document.createElement("div");
+    chips.className = "kit-crate-chiphost";
+    c.chipsEl = chips;
+    wrap.appendChild(chips);
+    renderCrateChips(s);
+    return wrap;
+  }
+
+  function crateTextField(label, val, onChange) {
+    var w = document.createElement("label");
+    w.className = "kit-crate-field";
+    var cap = document.createElement("span");
+    cap.className = "kit-crate-flabel";
+    cap.textContent = label;
+    var inp = document.createElement("input");
+    inp.type = "text";
+    inp.className = "kit-crate-input";
+    inp.value = val || "";
+    inp.addEventListener("input", function () { onChange(inp.value.trim()); });
+    w.appendChild(cap);
+    w.appendChild(inp);
+    return w;
+  }
+
+  function crateNumField(label, val, onChange) {
+    var w = document.createElement("label");
+    w.className = "kit-crate-field";
+    var cap = document.createElement("span");
+    cap.className = "kit-crate-flabel";
+    cap.textContent = label;
+    var inp = document.createElement("input");
+    inp.type = "number";
+    inp.className = "kit-crate-input kit-crate-num";
+    inp.min = "40";
+    inp.max = "240";
+    inp.value = val || "";
+    inp.addEventListener("input", function () { onChange(inp.value.trim()); });
+    w.appendChild(cap);
+    w.appendChild(inp);
+    return w;
+  }
+
+  function crateCheckField(label, val, onChange) {
+    var w = document.createElement("label");
+    w.className = "kit-crate-check";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!val;
+    cb.addEventListener("change", function () { onChange(cb.checked); });
+    var cap = document.createElement("span");
+    cap.textContent = label;
+    w.appendChild(cb);
+    w.appendChild(cap);
+    return w;
+  }
+
+  // Facet-count chips (genre + mood), painted into the persistent chip host so
+  // a search refresh doesn't rebuild the form (which would steal input focus).
+  function renderCrateChips(s) {
+    var c = s.borrow.crate, host = c.chipsEl;
+    if (!host) return;
+    host.innerHTML = "";
+    var fc = c.facetCounts;
+    if (!fc) return;
+    if (fc.genre) host.appendChild(buildFacetChips(s, "genre", fc.genre));
+    if (fc.mood) host.appendChild(buildFacetChips(s, "mood", fc.mood));
+  }
+
+  function buildFacetChips(s, kind, counts) {
+    var c = s.borrow.crate, f = c.facets;
+    var wrap = document.createElement("div");
+    wrap.className = "kit-crate-chips";
+    Object.keys(counts).slice(0, 8).forEach(function (name) {
+      var active = (f[kind] || "").toLowerCase() === String(name).toLowerCase();
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "kit-crate-chip" + (active ? " is-on" : "");
+      chip.textContent = name + " (" + counts[name] + ")";
+      chip.addEventListener("click", function () {
+        f[kind] = active ? "" : name;
+        renderCrateChips(s); // update active highlight without a form rebuild
+        loadCrateSearch(s);
+      });
+      wrap.appendChild(chip);
+    });
+    return wrap;
+  }
+
+  function scheduleCrateSearch(s) {
+    var c = s.borrow.crate;
+    if (c._searchTimer) { try { clearTimeout(c._searchTimer); } catch (_) {} }
+    c._searchTimer = setTimeout(function () {
+      c._searchTimer = null;
+      loadCrateSearch(s);
+    }, 250);
+  }
+
+  // ---- crate fetch + render ----
+
+  function loadCrateCandidates(s) {
+    var b = s.borrow, c = b.crate;
+    var stem = b.stem, cur = borrowSongId(s);
+    c.matchLoading = true;
+    c.matchLoaded = false;
+    c.matchUnavailable = false;
+    renderBorrowBody(s);
+    fetch(crateCandidatesUrl(cur, stem, c))
+      .then(function (r) {
+        if (r.status === 404) { c.matchUnavailable = true; return { candidates: [] }; }
+        return r.ok ? r.json() : { candidates: [] };
+      })
+      .catch(function () { return { candidates: [] }; })
+      .then(function (data) {
+        // Stale guard: surface gone, source/mode switched, or Part changed.
+        if (!s.alive || !b.pop || c.source !== "crate" || c.mode !== "match" || b.stem !== stem) return;
+        c.matchCandidates = ((data && data.candidates) || [])
+          .map(normalizeCrateTrack).filter(Boolean).slice(0, 12);
+        c.matchLoaded = true;
+        c.matchLoading = false;
+        renderBorrowBody(s);
+      });
+  }
+
+  function loadCrateSearch(s) {
+    var b = s.borrow, c = b.crate;
+    c.browseLoading = true;
+    c.browseLoaded = false;
+    c.browseUnavailable = false;
+    renderBorrowBody(s);
+    fetch(crateSearchUrl(c))
+      .then(function (r) {
+        if (r.status === 404) { c.browseUnavailable = true; return { tracks: [] }; }
+        return r.ok ? r.json() : { tracks: [] };
+      })
+      .catch(function () { return { tracks: [] }; })
+      .then(function (data) {
+        if (!s.alive || !b.pop || c.source !== "crate" || c.mode !== "browse") return;
+        c.browseTracks = ((data && data.tracks) || [])
+          .map(normalizeCrateTrack).filter(Boolean);
+        c.browseTotal = (data && typeof data.total === "number")
+          ? data.total : c.browseTracks.length;
+        var fc = data && (data.facetCounts || data.facet_counts);
+        c.facetCounts = (fc && typeof fc === "object") ? fc : null;
+        c.browseLoaded = true;
+        c.browseLoading = false;
+        renderCrateChips(s); // repaint only the chips (keeps input focus)
+        renderBorrowBody(s);
+      });
+  }
+
+  function renderCrateBody(s) {
+    var b = s.borrow, c = b.crate, body = b.bodyEl;
+    if (!body) return;
+    body.innerHTML = "";
+    if (c.mode === "browse") { renderCrateBrowseBody(s, body); return; }
+    renderCrateMatchBody(s, body);
+  }
+
+  function crateNote(text, spinner) {
+    var note = document.createElement("div");
+    note.className = "kit-borrow-note";
+    if (spinner) {
+      var sp = document.createElement("span");
+      sp.className = "kit-borrow-spinner";
+      note.appendChild(sp);
+    }
+    var t = document.createElement("span");
+    t.textContent = text;
+    note.appendChild(t);
+    return note;
+  }
+
+  function renderCrateMatchBody(s, body) {
+    var c = s.borrow.crate;
+    if (c.matchUnavailable) {
+      body.appendChild(crateNote("The Vinyl Crate isn't available yet.", false));
+      return;
+    }
+    if (c.matchLoading || !c.matchLoaded) {
+      body.appendChild(crateNote("Digging the crate for your session…", true));
+      return;
+    }
+    if (!c.matchCandidates.length) {
+      body.appendChild(crateNote("No crate tracks fit this session yet — try Browse.", false));
+      return;
+    }
+    c.matchCandidates.forEach(function (t) { body.appendChild(crateRow(s, t)); });
+  }
+
+  function renderCrateBrowseBody(s, body) {
+    var c = s.borrow.crate;
+    if (c.browseUnavailable) {
+      body.appendChild(crateNote("The Vinyl Crate isn't available yet.", false));
+      return;
+    }
+    if (c.browseLoading || !c.browseLoaded) {
+      body.appendChild(crateNote("Searching the crate…", true));
+      return;
+    }
+    if (!c.browseTracks.length) {
+      body.appendChild(crateNote("No crate tracks match those filters.", false));
+      return;
+    }
+    c.browseTracks.forEach(function (t) { body.appendChild(crateRow(s, t)); });
+  }
+
+  // One crate row — name + meta + the REQUIRED attribution line (CC-BY), an
+  // export-locked badge for BY-SA, and an Add affordance. A pick renders the
+  // matched loops via /api/crate/{id}/borrow.
+  function crateRow(s, track) {
+    var c = s.borrow.crate;
+    var busy = c.busyTrack === track.id;
+    var otherBusy = !!c.busyTrack && !busy;
+
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "kit-borrow-cand kit-crate-cand" + (busy ? " is-busy" : "");
+    row.disabled = otherBusy;
+
+    var main = document.createElement("div");
+    main.className = "kit-borrow-cand-main";
+
+    var nameRow = document.createElement("div");
+    nameRow.className = "kit-crate-namerow";
+    var name = document.createElement("span");
+    name.className = "kit-borrow-cand-name";
+    name.textContent = track.title || track.id;
+    nameRow.appendChild(name);
+    if (track.exportEncumbered) {
+      var lock = document.createElement("span");
+      lock.className = "kit-crate-lock";
+      lock.textContent = "export-locked";
+      lock.title = "CC-BY-SA (ShareAlike) — including this in an export would "
+        + "force your remix to be re-licensed BY-SA.";
+      nameRow.appendChild(lock);
+    }
+    main.appendChild(nameRow);
+
+    var meta = document.createElement("span");
+    meta.className = "kit-borrow-cand-meta";
+    var line = crateMetaLine(track);
+    var hint = crateMatchHint(track);
+    if (hint) line = line ? (line + " · " + hint) : hint;
+    meta.textContent = line;
+    main.appendChild(meta);
+
+    var attrib = document.createElement("span");
+    attrib.className = "kit-crate-attrib";
+    attrib.textContent = crateAttribution(track);
+    if (track.sourceUrl) attrib.title = track.sourceUrl;
+    main.appendChild(attrib);
+
+    row.appendChild(main);
+
+    var act = document.createElement("span");
+    act.className = "kit-borrow-cand-act";
+    act.textContent = busy ? "Loading…" : "Add";
+    row.appendChild(act);
+
+    row.addEventListener("click", function () {
+      if (c.busyTrack) return;
+      applyCrateBorrow(s, track);
+    });
+    return row;
+  }
+
+  // Load a crate track's matched loops onto the pads. The host loadBorrow hook
+  // is song-donor specific (hits /api/song/{cur}/borrow), so the crate goes
+  // direct: fetch the crate manifest and mountManifest it — the same mount path
+  // the hostless owned-song fallback uses, so the loops land through
+  // mountPack → renderPads (waveforms/tints/hardware mirror all follow).
+  function applyCrateBorrow(s, track) {
+    var c = s.borrow.crate;
+    var id = track && track.id;
+    if (!id || c.busyTrack) return;
+    c.busyTrack = id;
+    renderBorrowBody(s);
+    var stem = s.borrow.stem;
+    Promise.resolve(doCrateLoad(s, id, stem))
+      .then(function () {
+        c.busyTrack = null;
+        if (s.alive) closeBorrowPicker(s);
+        var live = current || s;
+        var where = sessionTargetOpts() ? "your session key/tempo" : "your tempo";
+        toast(live, "Added " + (track.title || "a crate loop") + " — matched to " + where);
+      })
+      .catch(function (e) {
+        if (!s.alive) return;
+        c.busyTrack = null;
+        renderBorrowBody(s);
+        toast(s, "Crate borrow failed: " + ((e && e.message) || e));
+      });
+  }
+
+  function doCrateLoad(s, id, stem) {
+    var cur = borrowSongId(s); // session host (may be null on a blank canvas)
+    var url = "/api/crate/" + encodeURIComponent(id) +
+      "/borrow?stem=" + encodeURIComponent(stem) +
+      (cur ? "&session_id=" + encodeURIComponent(cur) : "") +
+      sessionTargetParams();
+    return fetch(url).then(function (r) {
+      if (r.status === 404) throw new Error("crate borrowing not available");
+      if (!r.ok) throw new Error("crate borrow HTTP " + r.status);
       return r.json();
     }).then(function (manifest) { mountManifest(manifest); });
   }
@@ -5482,6 +6257,14 @@
       pickerSongPads: pickerSongPads,
       packPadRows: packPadRows,
       arrangeBorrowLayout: arrangeBorrowLayout,
+      keyToCamelot: keyToCamelot,
+      crateLicenseLabel: crateLicenseLabel,
+      crateLicenseIsShareAlike: crateLicenseIsShareAlike,
+      normalizeCrateTrack: normalizeCrateTrack,
+      crateAttribution: crateAttribution,
+      crateMatchHint: crateMatchHint,
+      crateMetaLine: crateMetaLine,
+      crateQueryString: crateQueryString,
       collapseSections: collapseSections,
       blockIndexAtTime: blockIndexAtTime,
       arrangementDiff: arrangementDiff,
