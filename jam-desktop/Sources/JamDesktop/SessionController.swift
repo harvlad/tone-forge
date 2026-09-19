@@ -1710,76 +1710,107 @@ final class SessionController: ObservableObject {
             let (pack, sources, stems) = try await Self.fetchBorrowRaw(
                 base: base, analysisId: analysisId, donor: donorId,
                 stem: stem, targetBpm: targetBpm, targetKey: targetKey)
-            let files = await Self.downloadKitSamples(pack: pack, base: base)
-            guard !files.isEmpty else {
-                remixError = "Borrowed loops didn't download."
-                return
-            }
-            guard attachedAnalysisId == analysisId else { return }
-            drumKitSampleFiles = files
-            // Borrow pads are ALL file pads — warm them off the press path.
-            Task { [weak self] in
-                await self?.chopPlayer.prewarmFiles(Array(files.values))
-            }
+            await applyBorrowPack(
+                pack: pack, sources: sources, stems: stems, base: base,
+                analysisId: analysisId, donorId: donorId, donorName: donorName,
+                stem: stem)
+        } catch {
+            remixError = error.localizedDescription
+        }
+    }
 
-            // Only pads whose sample downloaded can mount. Keep their backend
-            // padIdx (drumKitSampleFiles is keyed on it) and their source tag +
-            // score; the controller lays them out capacity-aware so the 16/64
-            // toggle re-arranges (16 = best-of-both) instead of dropping a song.
-            let mountable = pack.pads.filter { files[$0.padIdx] != nil }
-            guard !mountable.isEmpty else { return }
+    /// Download a borrow/crate render's samples and MOUNT them on the pads —
+    /// the shared tail of `loadBorrowLoops` and `loadCrateLoops`. The two
+    /// sources differ only in WHERE the donor comes from (your own history vs
+    /// the shared crate) and in the attribution the CC-BY crate carries; the
+    /// download, the source-tagged 64/divider layout, the latch mode and the
+    /// content-addressed provenance are one path so a crate loop behaves exactly
+    /// like a borrowed one. `attribution` is nil for own-song borrow, the CC
+    /// credit string for a crate track — surfaced in the applied confirmation so
+    /// the required credit rides with the mount (the pad's small source line
+    /// stays the track name; the full credit shows here and in the picker rows).
+    @MainActor
+    private func applyBorrowPack(
+        pack: SamplePack, sources: [Int: BorrowPadSource], stems: [Int: String],
+        base: URL, analysisId: String, donorId: String, donorName: String?,
+        stem: String, attribution: String? = nil
+    ) async {
+        let files = await Self.downloadKitSamples(pack: pack, base: base)
+        guard !files.isEmpty else {
+            remixError = "Borrowed loops didn't download."
+            return
+        }
+        guard attachedAnalysisId == analysisId else { return }
+        drumKitSampleFiles = files
+        // Borrow pads are ALL file pads — warm them off the press path.
+        Task { [weak self] in
+            await self?.chopPlayer.prewarmFiles(Array(files.values))
+        }
 
-            // Source-song labels: the current song for `initial` (blue) pads,
-            // the donor for `donor` (amber) ones.
-            let hostName = attachedBundle?.meta.title ?? "This song"
-            let donorLabel = donorName ?? Self.strippedBorrowName(pack.name)
+        // Only pads whose sample downloaded can mount. Keep their backend
+        // padIdx (drumKitSampleFiles is keyed on it) and their source tag +
+        // score; the controller lays them out capacity-aware so the 16/64
+        // toggle re-arranges (16 = best-of-both) instead of dropping a song.
+        let mountable = pack.pads.filter { files[$0.padIdx] != nil }
+        guard !mountable.isEmpty else { return }
 
-            var mounts: [LaunchpadController.BorrowMount] = []
-            for pad in mountable {
-                guard let url = files[pad.padIdx] else { continue }
-                let source: BorrowPadSource =
-                    sources[pad.padIdx] == .donor ? .donor : .initial
-                // Real loop length so the pad's WAVEFORM draws the whole loop.
-                // The file path plays the whole file regardless of the chop
-                // window; endSec/durationSec only frame the thumbnail, and the
-                // old 0.5 s stub made every borrow pad render as a blip then a
-                // flat line. Header read, cheap.
-                let dur: Double = (try? AVAudioFile(forReading: url)).map {
-                    Double($0.length) / $0.processingFormat.sampleRate } ?? 0.5
-                // performanceScore (when the backend supplies it) ranks pads for
-                // the compact grid; loopScore stays 1.0 so the seam crossfade is
-                // unchanged from before.
-                let chop = Chop(
-                    idx: pad.padIdx, startSec: 0, endSec: dur, durationSec: dur,
-                    kind: "phrase", sectionLabel: pad.name,
-                    colorHint: pad.colorHint, contentType: nil,
-                    performanceScore: pad.performanceScore, difficulty: nil,
-                    loopable: true, loopScore: 1.0, crossfadeMs: nil,
-                    assetId: "borrowfile:\(pad.padIdx)")
-                mounts.append(.init(
-                    chop: chop, stem: stems[pad.padIdx] ?? "other",
-                    sourceLabel: source == .donor ? donorLabel : hostName,
-                    source: source))
-            }
-            guard !mounts.isEmpty else { return }
-            launchpad.playbackMode = .latch     // borrow pads LATCH (loop until re-tapped)
-            launchpad.adoptBorrowAssignments(mounts)
-            // Retain provenance for Project snapshots: FX keys resolve
-            // on the borrow pack's id; BorrowRefs capture the mounted
-            // pads' CONTENT ADDRESS (sourceLoopStartSec/EndSec/assetId
-            // from the backend), never the response padIdx.
-            activeGridPackId = pack.packId
-            activeBorrowContext = BorrowContext(
-                donorId: donorId,
-                donorName: donorLabel,
-                stem: stem,
-                pads: mountable
-            )
+        // Source-song labels: the current song for `initial` (blue) pads,
+        // the donor for `donor` (amber) ones.
+        let hostName = attachedBundle?.meta.title ?? "This song"
+        let donorLabel = donorName ?? Self.strippedBorrowName(pack.name)
+
+        var mounts: [LaunchpadController.BorrowMount] = []
+        for pad in mountable {
+            guard let url = files[pad.padIdx] else { continue }
+            let source: BorrowPadSource =
+                sources[pad.padIdx] == .donor ? .donor : .initial
+            // Real loop length so the pad's WAVEFORM draws the whole loop.
+            // The file path plays the whole file regardless of the chop
+            // window; endSec/durationSec only frame the thumbnail, and the
+            // old 0.5 s stub made every borrow pad render as a blip then a
+            // flat line. Header read, cheap.
+            let dur: Double = (try? AVAudioFile(forReading: url)).map {
+                Double($0.length) / $0.processingFormat.sampleRate } ?? 0.5
+            // performanceScore (when the backend supplies it) ranks pads for
+            // the compact grid; loopScore stays 1.0 so the seam crossfade is
+            // unchanged from before.
+            let chop = Chop(
+                idx: pad.padIdx, startSec: 0, endSec: dur, durationSec: dur,
+                kind: "phrase", sectionLabel: pad.name,
+                colorHint: pad.colorHint, contentType: nil,
+                performanceScore: pad.performanceScore, difficulty: nil,
+                loopable: true, loopScore: 1.0, crossfadeMs: nil,
+                assetId: "borrowfile:\(pad.padIdx)")
+            mounts.append(.init(
+                chop: chop, stem: stems[pad.padIdx] ?? "other",
+                sourceLabel: source == .donor ? donorLabel : hostName,
+                source: source))
+        }
+        guard !mounts.isEmpty else { return }
+        launchpad.playbackMode = .latch     // borrow pads LATCH (loop until re-tapped)
+        launchpad.adoptBorrowAssignments(mounts)
+        // Retain provenance for Project snapshots: FX keys resolve
+        // on the borrow pack's id; BorrowRefs capture the mounted
+        // pads' CONTENT ADDRESS (sourceLoopStartSec/EndSec/assetId
+        // from the backend), never the response padIdx. For a crate load
+        // donorId is the crate id ("crate:jamendo:…"), so a re-opened
+        // workspace re-resolves the same loop AND its attribution.
+        activeGridPackId = pack.packId
+        activeBorrowContext = BorrowContext(
+            donorId: donorId,
+            donorName: donorLabel,
+            stem: stem,
+            pads: mountable
+        )
+        if let attribution, !attribution.isEmpty {
+            // CC-BY: the credit rides in the confirmation the user sees on mount.
+            remixApplied =
+                "Applied: Crate — \(donorLabel) below your song, looped to this "
+                + "song's tempo. \(attribution)"
+        } else {
             remixApplied =
                 "Applied: Borrow — your song on top, \(donorLabel) below, "
                 + "looped to this song's tempo."
-        } catch {
-            remixError = error.localizedDescription
         }
     }
 
@@ -1903,6 +1934,149 @@ final class SessionController: ObservableObject {
         let pack = try JSONDecoder().decode(SamplePack.self, from: data)
         // Pure, unit-pinned (BorrowSourcesDecodeTests): the sidecar decode that
         // once hard-coded stem "drums" (all pads red) and dropped the source tag.
+        let (sources, stems) = decodeBorrowSources(from: data)
+        return (pack, sources, stems)
+    }
+
+    // MARK: - Vinyl Crate (shared CC-BY donor pool)
+    //
+    // The crate is the borrow engine's SECOND source: a curated, read-only pool
+    // of legally-clean (CC0 / CC-BY) tracks everyone can dig, session-matched by
+    // the same tempo/harmony borrow engine plus the crate's own weighted signals
+    // (melody/energy/genre/instrumentation). The picker composes two orthogonal
+    // views over one CrateTrack set: `crateCandidates` = "For your session"
+    // (ranked), `searchCrate` = "Browse the crate" (faceted). Both feed the SAME
+    // render + pad-mount as own-song borrow (`loadCrateLoops` → applyBorrowPack).
+    //
+    // These are jam-desktop-owned HTTP calls (the crate endpoints post-date the
+    // shared RemixClient, and mobile-ios isn't editable from here — the same
+    // SHARED-CLIENT GAP as the target-aware borrow fetches). They deliberately
+    // reuse AuthContext, the borrow long-haul session, the SamplePack DTO and
+    // the source-tag sidecar decode so ranking, download and mount stay one path.
+
+    /// Session-matched crate suggestions for a stem. `session_id` gives the
+    /// backend the host tempo/key/melody/stems context; `genre_mode` toggles
+    /// similar-vs-contrast affinity; `facets` pre-filter the pool before the
+    /// weighted ranking (so "rank-match but only CC0 / only with a drum stem"
+    /// stacks rather than competes). Empty on any error, exactly like
+    /// `borrowCandidates`, so the picker degrades to "no matches" not a crash.
+    func crateCandidates(
+        stem: String, genreMode: CrateGenreMode = .similar,
+        facets: CrateFacetQuery = .init(), limit: Int = 24
+    ) async -> [CrateCandidate] {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL
+        else { return [] }
+        return (try? await Self.fetchCrateCandidates(
+            base: base, sessionId: analysisId, stem: stem,
+            genreMode: genreMode, facets: facets, limit: limit))?.candidates ?? []
+    }
+
+    /// Faceted crate browse — NO session needed (catalog view). Returns the
+    /// rows PLUS the per-facet counts so the UI can render a facet sidebar.
+    /// nil on error so the browse panel shows "couldn't reach the crate".
+    func searchCrate(
+        facets: CrateFacetQuery, limit: Int = 40, offset: Int = 0
+    ) async -> CrateSearchResponse? {
+        guard let base = backendBaseURL else { return nil }
+        return try? await Self.fetchCrateSearch(
+            base: base, facets: facets, limit: limit, offset: offset)
+    }
+
+    /// Render + mount a crate track's loops onto the pads — the crate twin of
+    /// `loadBorrowLoops`. The crate is the DONOR, the loaded song the HOST:
+    /// loops tempo-matched + key-conformed to the session (or the Session
+    /// target when on), the host untouched. `attribution` is the CC credit,
+    /// threaded through to the mount confirmation (CC-BY obligation).
+    @MainActor
+    func loadCrateLoops(
+        trackId: String, stem: String, trackName: String? = nil,
+        attribution: String? = nil, targetBpm: Double? = nil,
+        targetKey: String? = nil
+    ) async {
+        guard let analysisId = attachedAnalysisId, let base = backendBaseURL,
+              borrowBusyDonor == nil else { return }
+        borrowBusyDonor = trackId
+        remixError = nil
+        defer { borrowBusyDonor = nil }
+        do {
+            let (pack, sources, stems) = try await Self.fetchCrateBorrowRaw(
+                base: base, trackId: trackId, sessionId: analysisId,
+                stem: stem, targetBpm: targetBpm, targetKey: targetKey)
+            await applyBorrowPack(
+                pack: pack, sources: sources, stems: stems, base: base,
+                analysisId: analysisId, donorId: trackId, donorName: trackName,
+                stem: stem, attribution: attribution)
+        } catch {
+            remixError = error.localizedDescription
+        }
+    }
+
+    // MARK: Crate HTTP
+
+    /// `<base>/api/crate/<leaf>` with the given query. `id` (a crate track id)
+    /// is appended as a path segment when present — it can contain ':' which is
+    /// a legal path char, so URLComponents percent-encodes it correctly.
+    private static func crateURL(
+        _ base: URL, _ leaf: String, id: String? = nil, query: [URLQueryItem]
+    ) -> URL? {
+        var path = base.appendingPathComponent("api/crate")
+        if let id { path = path.appendingPathComponent(id) }
+        path = path.appendingPathComponent(leaf)
+        var c = URLComponents(url: path, resolvingAgainstBaseURL: false)
+        c?.queryItems = query.isEmpty ? nil : query
+        return c?.url
+    }
+
+    private static func fetchCrateCandidates(
+        base: URL, sessionId: String, stem: String, genreMode: CrateGenreMode,
+        facets: CrateFacetQuery, limit: Int
+    ) async throws -> CrateCandidatesResponse {
+        var q: [URLQueryItem] = [
+            .init(name: "session_id", value: sessionId),
+            .init(name: "stem", value: stem),
+            .init(name: "genre_mode", value: genreMode.rawValue),
+        ]
+        q.append(contentsOf: facets.facetQueryItems())   // pre-rank filters
+        q.append(.init(name: "limit", value: String(limit)))
+        guard let url = crateURL(base, "candidates", query: q)
+        else { throw RemixClientError.invalidURL }
+        let (data, response) = try await URLSession.shared.data(
+            for: authedRequest(url))
+        try checkOK(response)
+        return try JSONDecoder().decode(CrateCandidatesResponse.self, from: data)
+    }
+
+    private static func fetchCrateSearch(
+        base: URL, facets: CrateFacetQuery, limit: Int, offset: Int
+    ) async throws -> CrateSearchResponse {
+        let q = facets.searchQueryItems(limit: limit, offset: offset)
+        guard let url = crateURL(base, "search", query: q)
+        else { throw RemixClientError.invalidURL }
+        let (data, response) = try await URLSession.shared.data(
+            for: authedRequest(url))
+        try checkOK(response)
+        return try JSONDecoder().decode(CrateSearchResponse.self, from: data)
+    }
+
+    /// `GET /api/crate/{id}/borrow` — the render/mount path. Same long-haul
+    /// session as borrow (first render is server-side WSOLA + transpose), and
+    /// the SAME source-tag sidecar decode so the 64/divider layout can tell the
+    /// host pads from the crate donor's.
+    private static func fetchCrateBorrowRaw(
+        base: URL, trackId: String, sessionId: String, stem: String,
+        targetBpm: Double?, targetKey: String?
+    ) async throws -> (pack: SamplePack, sources: [Int: BorrowPadSource],
+                       stems: [Int: String]) {
+        let q = withTarget(
+            [URLQueryItem(name: "session_id", value: sessionId),
+             URLQueryItem(name: "stem", value: stem)],
+            targetBpm, targetKey)
+        guard let url = crateURL(base, "borrow", id: trackId, query: q)
+        else { throw RemixClientError.invalidURL }
+        let (data, response) = try await borrowLongHaul.data(
+            for: authedRequest(url))
+        try checkOK(response)
+        let pack = try JSONDecoder().decode(SamplePack.self, from: data)
         let (sources, stems) = decodeBorrowSources(from: data)
         return (pack, sources, stems)
     }
