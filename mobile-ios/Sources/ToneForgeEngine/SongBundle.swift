@@ -125,6 +125,8 @@ public struct BundleTimeline: Codable, Sendable, Equatable {
     /// Per-stem chord lanes keyed by stem name (guitar_1, other, piano, …).
     /// Additive: nil on legacy/cached bundles. The server drops empty
     /// lanes, so a present-but-thin dict is honest. See ``resolvedChords``.
+    /// The desktop surface picks the same lane via JamDesktopCore
+    /// `richestChordLane`; both agree with web's `_richestChordLane`.
     public let chordsByStem: [String: [ChordEvent]]?
     public let sections: [SectionEvent]
     public let beats: [Double]

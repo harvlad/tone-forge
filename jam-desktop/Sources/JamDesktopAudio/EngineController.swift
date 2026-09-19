@@ -14,6 +14,7 @@
 // Grows in M4 (monitor/tone control surface).
 
 import Foundation
+import AVFoundation
 import ConnectCore
 import ToneForgeEngine
 import JamDesktopCore
@@ -22,7 +23,10 @@ import JamDesktopCore
 public final class EngineController {
 
     public let engine = AudioEngine()
-    public let clock = TransportClock()
+    /// Slaved to the audio render clock in `init` (see below), not a
+    /// wall clock — the transport position tracks the sample clock that
+    /// drives playback so the chord highlight can't drift against it.
+    public let clock: TransportClock
     /// Shared musical submix with the master FX chain (D-022). All
     /// musical sources (stems, chops, later sequencer/synth) land on
     /// `musicBus.input`; the monitor/guitar path stays untouched.
@@ -48,6 +52,24 @@ public final class EngineController {
     }
 
     public init() {
+        // Slave the transport clock to the audio render clock: song
+        // position derives from the output node's sample count
+        // (lastRenderTime), the same oscillator that clocks playback,
+        // so it can't skew against the audio the way a free-running
+        // mach_absolute_time wall clock does over a long song.
+        let avEngine = engine.avEngine
+        clock = TransportClock(monotonicSecondsProvider: {
+            // Render sample position → seconds. Invalid before the
+            // engine renders (pre-start) — fall back to the CPU clock
+            // so pre-roll reads still advance; once playing,
+            // lastRenderTime is always valid, so the sources never mix
+            // mid-session.
+            if let rt = avEngine.outputNode.lastRenderTime,
+               rt.isSampleTimeValid, rt.sampleRate > 0 {
+                return Double(rt.sampleTime) / rt.sampleRate
+            }
+            return Double(mach_absolute_time()) / TransportClock.ticksPerSecond()
+        })
         engine.onGraphRebuilt = { [weak self] in
             // ConnectCore dispatches this on the main queue already;
             // hop through MainActor to satisfy isolation.
@@ -62,6 +84,18 @@ public final class EngineController {
         stemPlayer.outputNode = musicBus.input
         clickTrack.attach()
         try engine.start()
+        // Output latency is known once the output unit is live; feed it
+        // to the clock so the reported position is retarded to match
+        // the audio the listener HEARS (worst on Bluetooth).
+        refreshOutputLatency()
+    }
+
+    /// Query the engine's output latency and hand it to the clock. The
+    /// heard-delay ≈ hardware/device output latency + one render buffer
+    /// (the scheduling granularity between render and the DAC).
+    private func refreshOutputLatency() {
+        let report = engine.latencyReport()
+        clock.setOutputLatency(report.outputDeviceLatencySec + report.bufferDurationSec)
     }
 
     public func stop() {
@@ -90,6 +124,9 @@ public final class EngineController {
         musicBus.reattach()
         stemPlayer.reattach()
         clickTrack.reattach()
+        // A device flap can swap the output (e.g. to Bluetooth) and
+        // change its latency — re-read it so compensation stays honest.
+        refreshOutputLatency()
         if clock.state == .playing {
             stemPlayer.play(atSongSeconds: clock.nowSongSeconds)
             if clickEnabled { clickTrack.resync() }

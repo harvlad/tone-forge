@@ -16,9 +16,11 @@ public struct ChordRibbonModel: Sendable, Equatable {
     public let sections: [SectionEvent]
 
     public init(timeline: BundleTimeline) {
-        // Defensive sort: analysis output is ordered, but the ribbon's
-        // binary search silently misbehaves on unsorted input.
-        self.chords = timeline.chords.sorted { $0.start < $1.start }
+        // Follow the richest per-stem lane, not the sparse legacy
+        // "other" lane (ChordLaneSelection / jam.js parity). Defensive
+        // sort: analysis output is ordered, but the ribbon's binary
+        // search silently misbehaves on unsorted input.
+        self.chords = timeline.richestChordLane.sorted { $0.start < $1.start }
         self.sections = timeline.sections
     }
 

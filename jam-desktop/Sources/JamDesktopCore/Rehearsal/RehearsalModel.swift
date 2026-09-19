@@ -55,7 +55,9 @@ public final class RehearsalModel {
 
     public func load(bundle: SongBundle) {
         sections = bundle.timeline.sections
-        chords = bundle.timeline.chords.sorted { $0.start < $1.start }
+        // Richest per-stem lane (ChordLaneSelection), not the legacy
+        // "other" lane, so the chord-practice grid drills real harmony.
+        chords = bundle.timeline.richestChordLane.sorted { $0.start < $1.start }
         items = Self.buildItems(sections: sections, chords: chords)
         selectedIndex = items.first?.sectionIndex
     }
