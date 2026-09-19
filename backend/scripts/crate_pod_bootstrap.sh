@@ -89,14 +89,23 @@ python -m pip install -q -r "$REQ" 2>&1 | tail -3 || true
 #     basic_pitch prefers the TF-CPU backend and the polyphonic pass runs on CPU
 #     even with onnxruntime-gpu installed. Best-effort: on failure the ensemble
 #     falls back to pYIN (lower fidelity) but the shard still completes.
-ORT_PKG=onnxruntime
-if command -v nvidia-smi >/dev/null 2>&1; then
-  ORT_PKG=onnxruntime-gpu
-  python -m pip uninstall -y onnxruntime tensorflow >/dev/null 2>&1 || true
+# SKIP on the baked prod image (ghcr.io/harvlad/tone-forge-worker): it already
+# ships basic_pitch + onnxruntime-gpu built against a MATCHED CUDA 12.6 / cuDNN
+# 9 runtime. Re-`pip install`ing an unpinned onnxruntime-gpu over that would
+# pull whatever wheel is latest and can mismatch the baked cuDNN — the exact
+# CUDA-EP init that HANGS. So only install on a base that lacks the pair.
+if python -c "import basic_pitch, onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers()" 2>/dev/null; then
+  echo "==> basic_pitch + onnxruntime-gpu (CUDA EP) already present — baked image, skip install"
+else
+  ORT_PKG=onnxruntime
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    ORT_PKG=onnxruntime-gpu
+    python -m pip uninstall -y onnxruntime tensorflow >/dev/null 2>&1 || true
+  fi
+  { python -m pip install --no-deps basic-pitch \
+      && python -m pip install mir_eval resampy "$ORT_PKG"; } 2>&1 | tail -3 \
+    || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
 fi
-{ python -m pip install --no-deps basic-pitch \
-    && python -m pip install mir_eval resampy "$ORT_PKG"; } 2>&1 | tail -3 \
-  || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
 
 # 3. Prefetch models (demucs + beat-this + all-in-one) so none download mid-run
 #    and blow the watchdog. Returns in seconds when the caches are warm.
