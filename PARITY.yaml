@@ -768,3 +768,24 @@ features:
       connect:
         status: na
         note: "No pad surface."
+
+  - id: songs-page
+    name: Unified Songs page — one full-screen searchable / filterable / sortable table that is the UNION of analyzed history + in-flight jobs, replacing both the cramped Recent Songs list and the Band Room card-stack (a completing job collapses into its history row; Band Room becomes a status column + a Processing filter)
+    platforms:
+      web:
+        status: partial
+        evidence: "backend/tone_forge_api.py#library_search"
+        note: "Backend data layer shipped this pass (the shared engine both web + desktop consume, per the shared-engine-first doctrine): GET /api/library/search + POST /api/library/ingest over tone_forge.sources.LibrarySource, which UNIONs _load_history() with the /api/jobs registry keyed so a done job (carrying its history_id) COLLAPSES into its history row, then does server-side facet filtering (genre/key/tempo-range/mood/tags/status) + sort (recent|title|tempo|key) BEFORE opaque-cursor paging (a background ingest inserting a row cannot shift the window). Row shape is the frozen contracts.SourceTrack; _HISTORY_LIST_FIELDS now projects genre/mood/tags. The scope=mine owner gate mirrors /api/history exactly (SHARED_LIBRARY testing cross-show preserved, not weakened). ingest is the single content-hash DEDUPE door. Pinned by backend/tests/test_library_search.py. PARTIAL because the full-screen virtualized/windowed table UI on the Jam page — replacing the Recent Songs sidebar list + the Band Room card-stack, with the status-driven trailing action cell (Open / live % / Retry|Dismiss) — is the follow-up pass; CrateSource/JamendoSource/CcmixterSource/DeviceSource are declared seams (SourceId) not yet built."
+      desktop:
+        status: partial
+        evidence: "backend/tone_forge_api.py#library_search"
+        note: "Consumes the SAME /api/library/search backend shipped this pass (identical layout to web by design). PARTIAL because the native Songs page — rewiring RootView 'View all songs' away from the raw .bandRoom queue to the new table, with AnalysisQueueModel .done(historyId) rows collapsing into their history rows — is the follow-up pass. Backend union/collapse/facet/sort/cursor + scope=mine gate already land here (backend/tests/test_library_search.py)."
+      ios:
+        status: missing
+        note: "This pass scopes the unified table to web + desktop. iOS has its own Library surface; porting the SourceTrack row shape + /api/library/search-driven table into ToneForgeMobile is a queued follow-up (the LibrarySource seam is already shared backend, so iOS inherits the union/collapse/facet/cursor semantics for free when built)."
+      plugin:
+        status: na
+        note: "jamn Kit is a sampler plugin with no song-library browser; song discovery/analysis lives in the jam apps + web, not in a plugin surface."
+      connect:
+        status: na
+        note: "Connect is a low-latency CoreAudio monitoring companion with no song library — nothing to browse or search."
