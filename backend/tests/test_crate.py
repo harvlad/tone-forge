@@ -443,6 +443,75 @@ def test_ingest_track_end_to_end(tmp_path, monkeypatch):
     assert entry["result"]["detected_key"] == "C major"
 
 
+def _load_ingest_cli():
+    """Import the wiring script (scripts/ingest_crate.py) by path — it isn't a
+    package module. Safe at import time: its heavy analysis deps (torch/demucs)
+    are imported lazily inside _make_analyzer, not at module load."""
+    import importlib.util
+    from pathlib import Path as _P
+    script = _P(__file__).resolve().parents[1] / "scripts" / "ingest_crate.py"
+    spec = importlib.util.spec_from_file_location("ingest_crate_cli", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_shard_selector_round_robin():
+    cli = _load_ingest_cli()
+    metas = [{"id": str(i)} for i in range(10)]
+    s0 = cli._select_shard(metas, "0/4")
+    s3 = cli._select_shard(metas, "3/4")
+    assert [m["id"] for m in s0] == ["0", "4", "8"]
+    assert [m["id"] for m in s3] == ["3", "7"]
+    # Union of all shards == the whole manifest, no track dropped or duplicated.
+    allsh = []
+    for i in range(4):
+        allsh += cli._select_shard(metas, f"{i}/4")
+    assert sorted(int(m["id"]) for m in allsh) == list(range(10))
+    assert cli._select_shard(metas, None) == metas
+
+
+def test_run_batch_concurrency_isolates_failures(tmp_path, monkeypatch):
+    # Concurrency path: N tracks analyzed at once; one track's download raises →
+    # it is rejected, the others are still admitted, counts are correct, and the
+    # shared registry survives the concurrent writes (all good ids present).
+    cli = _load_ingest_cli()
+    crate_dir = tmp_path / "crate"
+    monkeypatch.setenv("TONEFORGE_CRATE_DIR", str(crate_dir))
+    creg.invalidate_cache()
+
+    def fake_download(url, staging):
+        if "FAIL" in url:
+            raise IOError("simulated 403 from the source CDN")
+        staging.mkdir(parents=True, exist_ok=True)
+        p = staging / (url.rsplit("/", 1)[-1] or "c.wav")
+        p.write_bytes(b"RIFFfake")
+        return p
+
+    def make_meta(i, fail=False):
+        return {
+            "id": f"crate:jamendo:{i}", "title": f"T{i}", "artist": "A",
+            "source": "jamendo", "source_track_id": str(i),
+            "source_url": f"https://jamendo.com/{i}",
+            "download_url": ("https://x/FAIL.mp3" if fail else f"https://x/{i}.mp3"),
+            "license_id": "CC-BY-3.0",
+            "license_url": "https://creativecommons.org/licenses/by/3.0/",
+            "attribution": f"“T{i}” by A (CC-BY-3.0)",
+        }
+
+    metas = [make_meta(i, fail=(i == 2)) for i in range(6)]
+    ok, fail = cli.run_batch(
+        metas, analyzer=lambda p: _blob(120, "C major"),
+        downloader=fake_download, concurrency=4, crate_dir=crate_dir,
+        blind_gate=lambda tid, res: True)
+
+    assert (ok, fail) == (5, 1)
+    creg.invalidate_cache()
+    loaded_ids = {t.id for t in creg.load_crate()}
+    assert loaded_ids == {f"crate:jamendo:{i}" for i in range(6) if i != 2}
+    assert "crate:jamendo:2" not in loaded_ids   # the failed download stayed out
+
+
 def test_ingest_rejects_failed_blind_gate(tmp_path, monkeypatch):
     monkeypatch.setenv("TONEFORGE_CRATE_DIR", str(tmp_path / "crate"))
     creg.invalidate_cache()

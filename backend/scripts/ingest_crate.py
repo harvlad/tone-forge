@@ -28,7 +28,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 # ccMixter (and some CDNs) 403 the default Python-urllib User-Agent as a bot.
@@ -106,38 +106,140 @@ def _make_analyzer():
     return analyze
 
 
+def _is_cuda_oom(exc: BaseException) -> bool:
+    """A CUDA out-of-memory error from running too many demucs at once. Detected
+    by shape (name/message) so the script never has to import torch (it stays
+    importable for the dry-run + tests without the analysis deps)."""
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return ("outofmemory" in name or "out of memory" in msg
+            or ("cuda" in msg and "memory" in msg))
+
+
+def _select_shard(metas: List[Dict], shard: Optional[str]) -> List[Dict]:
+    """Round-robin shard selector: ``--shard I/N`` keeps every track whose
+    position ≡ I (mod N). Round-robin (not contiguous) so sources/genres —
+    which are grouped in the manifest — spread evenly across pods, balancing
+    GPU load and not concentrating one source's failures on one pod."""
+    if not shard:
+        return metas
+    i_str, _, n_str = shard.partition("/")
+    i, n = int(i_str), int(n_str)
+    if not (0 <= i < n):
+        raise SystemExit(f"--shard {shard!r}: need 0 <= I < N")
+    return [m for idx, m in enumerate(metas) if idx % n == i]
+
+
+def run_batch(metas: List[Dict], *, analyzer, downloader, concurrency: int = 3,
+              crate_dir: Optional[Path] = None,
+              blind_gate=None) -> Tuple[int, int]:
+    """Download+analyze+register a batch, up to ``concurrency`` tracks at once.
+
+    A ThreadPoolExecutor over ``ingest_track`` is the safe primitive: each
+    track's ``pipeline.analyze`` runs under its own ``asyncio.run`` event loop
+    (asyncio.run is per-thread) and torch releases the GIL during GPU work, so
+    threads genuinely overlap the demucs passes. The shared registry.json write
+    is serialized inside ``ingest_track`` (a lock there), so concurrent
+    persistence is safe.
+
+    Per-track isolation is preserved: one track raising never sinks the batch.
+    A CUDA-OOM (too many concurrent demucs for the card) is not a real reject —
+    those tracks are collected and RETRIED sequentially after the pool drains,
+    so an over-eager --concurrency degrades to correctness rather than data loss.
+
+    Returns (admitted, rejected). Only the MAIN thread mutates the counters
+    (results are consumed via as_completed), so no counter lock is needed.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    kw = {} if blind_gate is None else {"blind_gate": blind_gate}
+
+    def _one(meta: Dict):
+        track = crate_ingest.ingest_track(
+            meta, analyzer=analyzer, downloader=downloader,
+            crate_dir=crate_dir, **kw)
+        return track
+
+    def _report_ok(tid, track):
+        print(f"  [ok] {tid} → {track.features.tempo_bpm:.0f} BPM "
+              f"{track.features.detected_key} ({track.license.license_id.value})")
+
+    ok = fail = 0
+    oom_retry: List[Dict] = []
+    workers = max(1, int(concurrency))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_one, m): m for m in metas}
+        for fut in as_completed(futs):
+            meta = futs[fut]
+            tid = meta.get("id")
+            try:
+                track = fut.result()
+                _report_ok(tid, track)
+                ok += 1
+            except Exception as exc:  # noqa: BLE001
+                if _is_cuda_oom(exc):
+                    print(f"  [oom] {tid}: {exc} — deferring to sequential retry")
+                    oom_retry.append(meta)
+                else:
+                    print(f"  [reject] {tid}: {exc}")
+                    fail += 1
+
+    # Sequential, isolated retry for anything that OOM'd under concurrency.
+    for meta in oom_retry:
+        tid = meta.get("id")
+        try:
+            track = _one(meta)
+            _report_ok(tid, track)
+            ok += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [reject] {tid}: {exc} (after OOM retry)")
+            fail += 1
+    return ok, fail
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Ingest CC-BY/CC0 tracks into the Vinyl Crate.")
-    ap.add_argument("manifest", help="JSON list of ingest-metadata dicts")
+    ap.add_argument("manifest", help="JSON manifest: a list of ingest dicts, or "
+                    "{\"_meta\":..., \"tracks\":[...]}")
     ap.add_argument("--dry-run", action="store_true",
                     help="validate admission + license only; no download/analysis")
     ap.add_argument("--crate-dir", default=None,
                     help="override TONEFORGE_CRATE_DIR for this run")
+    ap.add_argument("--concurrency", type=int, default=3,
+                    help="analyze up to N tracks at once (one A40 fits ~3-4 "
+                         "demucs). 1 = strict sequential. CUDA-OOM tracks are "
+                         "auto-retried sequentially.")
+    ap.add_argument("--shard", default=None,
+                    help="process only shard I of N, round-robin: --shard 0/4. "
+                         "For fanning the manifest across parallel GPU pods.")
     args = ap.parse_args()
 
     metas = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     if isinstance(metas, dict):
         metas = metas.get("tracks", [])
+    metas = _select_shard(metas, args.shard)
     crate_dir = Path(args.crate_dir) if args.crate_dir else None
 
-    analyzer = None if args.dry_run else _make_analyzer()
-    ok = fail = 0
-    for meta in metas:
-        tid = meta.get("id")
-        try:
-            crate_ingest.validate_admission(meta)
-            if args.dry_run:
+    if args.shard:
+        print(f"shard {args.shard}: {len(metas)} tracks")
+
+    if args.dry_run:
+        ok = fail = 0
+        for meta in metas:
+            tid = meta.get("id")
+            try:
+                crate_ingest.validate_admission(meta)
                 print(f"  [ok/dry] {tid} admissible")
                 ok += 1
-                continue
-            track = crate_ingest.ingest_track(
-                meta, analyzer=analyzer, downloader=_download, crate_dir=crate_dir)
-            print(f"  [ok] {tid} → {track.features.tempo_bpm:.0f} BPM "
-                  f"{track.features.detected_key} ({track.license.license_id.value})")
-            ok += 1
-        except Exception as exc:  # noqa: BLE001
-            print(f"  [reject] {tid}: {exc}")
-            fail += 1
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [reject] {tid}: {exc}")
+                fail += 1
+        print(f"done: {ok} admitted, {fail} rejected")
+        return 0 if fail == 0 else 1
+
+    analyzer = _make_analyzer()
+    ok, fail = run_batch(metas, analyzer=analyzer, downloader=_download,
+                         concurrency=args.concurrency, crate_dir=crate_dir)
     print(f"done: {ok} admitted, {fail} rejected")
     return 0 if fail == 0 else 1
 

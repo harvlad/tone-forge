@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -60,6 +61,16 @@ _LICENSE_URLS = {
 class IngestError(ValueError):
     """A track was rejected at ingest (bad source, incomplete license, or a
     failed blind gate). Never a soft-ship — the batch skips it and logs why."""
+
+
+# registry.json is a single shared file; ``_append_registry`` read-modify-writes
+# it. When a batch runs several ``ingest_track`` calls concurrently (the CLI's
+# --concurrency pool, or one A40 analyzing multiple tracks at once), two threads
+# racing that read-modify-write would drop rows. The per-id license/analysis
+# sidecars are distinct files (no cross-track race); only the manifest append
+# needs serializing. Per-track file writes stay outside the lock so analysis
+# still overlaps.
+_REGISTRY_WRITE_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +324,12 @@ def ingest_track(meta: Dict, *, analyzer: Analyzer, downloader: Downloader,
     )
 
     if persist:
+        # Per-id analysis blob: distinct filename, safe to write unlocked.
         _write_json(_reg._analysis_file(track_id), result)
-        _append_registry(root, track)
-        _reg.invalidate_cache()
+        # Shared manifest: serialize the read-modify-write across threads.
+        with _REGISTRY_WRITE_LOCK:
+            _append_registry(root, track)
+            _reg.invalidate_cache()
     return track
 
 
