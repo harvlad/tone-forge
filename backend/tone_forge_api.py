@@ -6138,11 +6138,23 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
             sym = c.get("symbol") or c.get("chord") or c.get("label")
             if start is None or end is None or not sym:
                 continue
-            out.append({
+            rec = {
                 "start": float(start),
                 "end": float(end),
                 "symbol": str(sym),
-            })
+            }
+            # Carry the real BTC posterior through to native so the
+            # client can dim/grey low-confidence chords (parity with the
+            # web ribbon). Absent on legacy results — omit rather than
+            # fabricate a 1.0, so the client can tell "unknown" from
+            # "certain".
+            conf = c.get("confidence")
+            if conf is not None:
+                try:
+                    rec["confidence"] = max(0.0, min(1.0, float(conf)))
+                except (TypeError, ValueError):
+                    pass
+            out.append(rec)
         return out
 
     def _norm_sections(items):
@@ -6174,8 +6186,37 @@ async def get_song_bundle(entry_id: str) -> JSONResponse:
         except (TypeError, ValueError):
             return []
 
+    # Chord lane plumbing (parity fix). Native historically shipped the
+    # flat legacy ``result['chords']`` — which is the sparse demucs
+    # "other" residual lane (~10% coverage on Cross Bones) — while the
+    # real 13-chord guitar progression sat in ``chords_by_stem`` and was
+    # DROPPED from this bundle entirely. Web already fixed this by picking
+    # the richest-coverage lane client-side (jam.js ``_richestChordLane``,
+    # commit d6f483a1). Do the SAME selection server-side here so iOS +
+    # desktop (which read the flat ``timeline.chords`` array) receive the
+    # guitar lane, not the residual. ``chordsByStem`` is exposed
+    # additively so a native lane picker can later match web's per-stem UI
+    # without another bundle change.
+    from tone_forge.analysis.chords import select_richest_chord_lane
+    _chords_by_stem = result.get("chords_by_stem") or {}
+    _richest_stem, _richest_lane = select_richest_chord_lane(
+        _chords_by_stem, fallback=result.get("chords") or [],
+    )
+    _norm_by_stem = {
+        str(name): _norm_chords(lane or [])
+        for name, lane in _chords_by_stem.items()
+        # Hide the non-harmonic lanes from native exactly as web does —
+        # they trace the tune / hallucinate rather than show harmony.
+        if str(name) not in ("vocals", "drums")
+        and isinstance(lane, (list, tuple))
+    }
     timeline = {
-        "chords": _norm_chords(result.get("chords") or []),
+        "chords": _norm_chords(_richest_lane),
+        # Which stem the flat ``chords`` array was drawn from (None when
+        # it fell back to the legacy lane). Lets a client label the lane
+        # and match web's default selection.
+        "chordLaneStem": _richest_stem,
+        "chordsByStem": _norm_by_stem,
         "sections": _norm_sections(result.get("sections") or []),
         "beats": _norm_time_array(result.get("beats_s") or []),
         "downbeats": _norm_time_array(result.get("downbeats_s") or []),
