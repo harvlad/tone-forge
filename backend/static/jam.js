@@ -2112,6 +2112,13 @@
       state.userInstrument = $('intake-instrument').value;
       resetTtfj();
       markTtfj('submit', { upload: file.name });
+      // Dedupe: an identical file already fully analyzed comes back with
+      // no job (job_id null) + the existing history id — open it straight
+      // away instead of a dead Band Room card (backend content-hash dedupe).
+      if (info.duplicate && info.history_id) {
+        loadSessionById(info.history_id, null, file.name.replace(/\.[^.]+$/, ''));
+        return;
+      }
       state.pendingJobId = info.job_id;
       enterBandRoom({
         jobId: info.job_id,
@@ -2203,6 +2210,11 @@
         state.userInstrument = $('intake-instrument').value;
         resetTtfj();
         markTtfj('submit', { cc_track: track.id });
+        // Dedupe: an already-analyzed track opens straight to the song.
+        if (info.duplicate && info.history_id) {
+          loadSessionById(info.history_id, null, track.title || 'Demo track');
+          return;
+        }
         state.pendingJobId = info.job_id;
         enterBandRoom({
           jobId: info.job_id,
