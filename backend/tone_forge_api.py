@@ -5379,6 +5379,14 @@ async def delete_history_entry(entry_id: str, request: Request) -> JSONResponse:
                 raise HTTPException(status_code=403, detail="Not your analysis")
         history = [e for e in history if e.get("id") != entry_id]
         _save_history(history)
+    # Purge any finished engine job that produced this (now-deleted) row.
+    # The LibrarySource union folds a done job into its history row; with
+    # the row gone, a lingering job would resurface standalone and the
+    # removed song would "reappear". Dropping the job closes that door at
+    # the source (the union also guards, but a dead job shouldn't persist).
+    for job in _JOBS.all():
+        if getattr(job, "history_id", None) == entry_id:
+            _JOBS.remove(job.id)
     if target:
         await asyncio.to_thread(_deep_delete_entry, target)
     return JSONResponse({"status": "deleted"})

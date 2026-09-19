@@ -255,7 +255,6 @@ class LibrarySource:
             e for e in self._history_provider() if _clean_str(e.get("id"))
         ]
         history_tracks = [self._track_from_history(e) for e in history_entries]
-        known_history_ids = {t.history_id for t in history_tracks}
 
         job_tracks: List[SourceTrack] = []
         seen_job_refs: set[str] = set()
@@ -266,9 +265,14 @@ class LibrarySource:
             seen_job_refs.add(ref)
             status = _job_status(job.get("status"))
             hid = _clean_str(job.get("history_id"))
-            # COLLAPSE: a finished job whose history row exists is already
-            # represented by that row — drop the duplicate.
-            if status == TrackStatus.DONE and hid and hid in known_history_ids:
+            # COLLAPSE: a finished job that ever produced a history row folds
+            # away. If that row still exists it IS the collapse (drop the
+            # duplicate). If the row is GONE — the user deleted the analysis
+            # via "Remove from Library" — we still drop the job, or the done
+            # job resurfaces standalone and the removed song "reappears".
+            # A done job with no history_id at all (never wrote a row) is the
+            # only done job that survives here.
+            if status == TrackStatus.DONE and hid:
                 continue
             job_tracks.append(self._track_from_job(job))
 

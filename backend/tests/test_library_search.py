@@ -150,10 +150,21 @@ class TestUnionCollapse:
         assert by_ref["J1"].status == TrackStatus.RUNNING
         assert by_ref["J1"].progress == pytest.approx(0.40)
 
-    def test_done_job_without_history_row_still_shows(self):
-        # Defensive: a done job whose history_id we DON'T have yet is not
-        # yet represented, so it must remain visible (no silent drop).
-        jobs = [_job("J1", status="done", percent=100.0, history_id="H-missing")]
+    def test_done_job_for_deleted_history_row_does_not_resurface(self):
+        # REGRESSION ("removed a song, it reappeared"): a done job carries
+        # the history_id it produced. When the user deletes that analysis
+        # via "Remove from Library", the history row is gone — but the job
+        # lingers. It must NOT resurface as a standalone row, or the removed
+        # song reappears. A done job that ever produced a history_id folds
+        # away whether or not the row currently exists.
+        jobs = [_job("J1", status="done", percent=100.0, history_id="H-deleted")]
+        page = _src([], jobs).search(limit=50)
+        assert page.tracks == (), "a done job for a deleted row must not resurface"
+
+    def test_done_job_with_no_history_id_still_shows(self):
+        # A done job that never wrote a history row (history_id is None) has
+        # no row to collapse into, so it remains its own row (no silent drop).
+        jobs = [_job("J1", status="done", percent=100.0, history_id=None)]
         page = _src([], jobs).search(limit=50)
         assert [t.source_ref for t in page.tracks] == ["J1"]
 
