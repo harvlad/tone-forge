@@ -17,6 +17,7 @@ always reach ToneForge regardless of which network the Mac is on.)
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 
@@ -408,6 +409,80 @@ def _add_to_history(
     for old in dropped:
         _deep_delete_entry(old)
     return entry
+
+
+# -----------------------------------------------------------------------------
+# Content-hash dedupe (Songs page)
+#
+# The same audio uploaded twice used to manufacture two independent
+# analyses — duplicate Band Room rows, and (when no worker was around)
+# two independently-stranding jobs. The upload paths now hash the bytes,
+# persist that hash onto the completed history entry, and consult
+# ``_find_duplicate_analysis`` before enqueuing so a re-upload REUSES the
+# prior analysis (or the in-flight job) instead of queuing a duplicate.
+#
+# Scope is per-owner by construction and back-compatible: a match
+# requires the existing row/job to belong to THIS caller (owner_id or
+# device_id), and legacy rows without a content_hash never match.
+# -----------------------------------------------------------------------------
+
+
+def _sha256_file(path: Path) -> str:
+    """Hex sha256 of a file, streamed in 1 MiB chunks (never slurps the
+    whole thing into memory)."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _find_duplicate_analysis(
+    content_hash: str | None,
+    device_id: str | None = None,
+    owner_id: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Existing analysis of these exact bytes owned by this caller.
+
+    Returns ``(history_id, job_id)``:
+
+      * a completed history entry with the same persisted ``content_hash``
+        (preferred — the richest, directly-reusable row); else
+      * a still-queued/running engine job carrying the same hash (collapse
+        rapid re-uploads before either finishes); else
+      * ``(None, None)``.
+
+    Per-owner: a match requires the entry/job to belong to this caller's
+    ``owner_id`` or ``device_id``, so user B's identical file is never
+    reused for user A. An anonymous caller with neither id matches
+    nothing (can't be scoped safely). Legacy rows/jobs without a
+    ``content_hash`` never match — purely additive, never raises.
+    """
+    chash = (content_hash or "").strip()
+    if not chash:
+        return (None, None)
+
+    def _mine(entry_owner: object, entry_device: object) -> bool:
+        return bool(
+            (owner_id and entry_owner == owner_id)
+            or (device_id and entry_device == device_id)
+        )
+
+    for entry in _load_history():
+        if entry.get("content_hash") == chash and _mine(
+                entry.get("owner_id"), entry.get("device_id")):
+            hid = entry.get("id")
+            if hid:
+                return (hid, None)
+
+    for job in _JOBS.all():
+        if job.kind != "engine" or job.status not in ("queued", "running"):
+            continue
+        if (job.payload or {}).get("content_hash") == chash and _mine(
+                job.owner_id, job.device_id):
+            return (None, job.id)
+
+    return (None, None)
 
 
 # -----------------------------------------------------------------------------
@@ -2560,6 +2635,44 @@ async def analyze_upload_endpoint(
 
     _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     device_id, owner_id = await _request_ownership(request)
+
+    # Drain the upload to a temp file while hashing the bytes. Hashing
+    # here (not after job creation) lets us dedupe BEFORE manufacturing a
+    # job: the same audio uploaded twice used to create two analyses —
+    # duplicate Band Room rows and, with no worker around, two jobs that
+    # strand independently. Streaming to a temp path keeps the whole file
+    # off the heap; it is promoted to the job-named path only if we keep
+    # the upload.
+    hasher = hashlib.sha256()
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=str(_UPLOADS_DIR), suffix=suffix)
+    try:
+        with os.fdopen(tmp_fd, "wb") as out:
+            while True:
+                chunk = await file.read(1 << 20)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                out.write(chunk)
+        content_hash = hasher.hexdigest()
+
+        # Reuse an existing analysis of these exact bytes for this owner
+        # instead of enqueuing a duplicate. Completed → open its history
+        # row; in-flight → follow the job already running. Anonymous
+        # callers (no owner/device) can't be scoped and fall through.
+        dup_hid, dup_job = _find_duplicate_analysis(
+            content_hash, device_id, owner_id)
+        if dup_hid or dup_job:
+            Path(tmp_name).unlink(missing_ok=True)
+            return JSONResponse({
+                "job_id": dup_job,
+                "history_id": dup_hid,
+                "duplicate": True,
+                "engine_online": _engine_online(),
+            })
+    except Exception:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
     job = _JOBS.create_engine_job(
         filename=file.filename,
         attested=True,
@@ -2569,6 +2682,9 @@ async def analyze_upload_endpoint(
             "extract_midi": extract_midi.lower() not in ("false", "0", "no"),
             "source_name": file.filename or "Uploaded file",
             "stems": {},
+            # Content fingerprint — persisted onto the history entry at
+            # completion so a later re-upload dedupes against it.
+            "content_hash": content_hash,
             # Same-machine worker shortcut (empty strings dropped).
             **({"source_local_path": source_local_path}
                if source_local_path else {}),
@@ -2588,8 +2704,7 @@ async def analyze_upload_endpoint(
     except Exception:
         pass
     upload_path = _UPLOADS_DIR / f"{job.id}{suffix}"
-    with upload_path.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
+    os.replace(tmp_name, upload_path)
     # Tags need the stored bytes, so attribution resolves after the
     # write (the job id names the file, so the job must exist first).
     await _JOBS.update(
@@ -2649,6 +2764,13 @@ async def _create_job_from_local_path(
     this for server-vetted content, recorded via attestation_source.
     """
     _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    # Fingerprint the source so a re-import dedupes exactly like a user
+    # upload (persisted onto history at completion). Best-effort — a
+    # hashing failure must never block a curated import.
+    try:
+        _content_hash = _sha256_file(src)
+    except Exception:  # noqa: BLE001
+        _content_hash = None
     job = _JOBS.create_engine_job(
         filename=filename,
         attested=True,
@@ -2659,6 +2781,7 @@ async def _create_job_from_local_path(
             "extract_midi": extract_midi,
             "source_name": meta.get("title") or filename,
             "stems": {},
+            **({"content_hash": _content_hash} if _content_hash else {}),
             "attestation_source": attestation_source,
         },
     )
@@ -2985,6 +3108,13 @@ async def engine_job_complete_endpoint(job_id: str, request: Request) -> JSONRes
     }
     if payload.get("attestation_source"):
         entry["attestation_source"] = payload["attestation_source"]
+    # Persist the content fingerprint so a later re-upload of identical
+    # bytes dedupes against this row instead of queuing a duplicate.
+    # ``source_sha256`` is the legacy same-machine alias, honoured for
+    # jobs enqueued before ``content_hash`` was written.
+    _content_hash = payload.get("content_hash") or payload.get("source_sha256")
+    if _content_hash:
+        entry["content_hash"] = _content_hash
     _stamp_attribution(entry, job.meta)
     history_entry = _add_to_history(
         entry, full_result=_convert_numpy_types(result),

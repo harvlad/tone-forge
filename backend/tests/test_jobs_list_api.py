@@ -34,10 +34,15 @@ def jobs_env(tmp_path, monkeypatch):
 
 def _upload(device_id: str | None, filename="song.wav"):
     headers = {"X-Device-Id": device_id} if device_id else {}
+    # Distinct bytes per filename: /api/analyze-upload now dedupes on the
+    # content hash, so two DIFFERENT songs must not share payload bytes or
+    # the second collapses into the first (that dedupe is covered in
+    # test_upload_dedupe.py; here we only exercise job scoping).
     return client.post(
         "/api/analyze-upload",
         data={"attested": "true", "extract_midi": "true"},
-        files={"file": (filename, io.BytesIO(b"RIFFfake"), "audio/wav")},
+        files={"file": (filename, io.BytesIO(b"RIFFfake:" + filename.encode()),
+                        "audio/wav")},
         headers=headers,
     )
 

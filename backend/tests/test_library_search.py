@@ -8,9 +8,10 @@ Covers the load-bearing invariants of the pluggable Songs table:
   * server-side facet filtering + sort BEFORE paging;
   * opaque-cursor paging — a row inserted mid-page does NOT shift the
     window (the whole reason cursors beat offsets here);
-  * the ONE ingest door doing history-id dedupe (re-adding an
-    already-analyzed track reuses its history row; content-hash reuse is
-    intentionally not wired — see LibrarySource.ingest);
+  * the ONE ingest door doing history-id AND content-hash dedupe
+    (re-adding an already-analyzed track — by id or by the sha256
+    persisted onto its history row — reuses that row instead of a
+    duplicate; see LibrarySource.ingest);
   * the ``scope=mine`` owner gate mirrored exactly from /api/history.
 
 Most logic is unit-tested against ``LibrarySource`` with in-memory list
@@ -323,15 +324,33 @@ class TestIngestDedupe:
         src = _src([_hist("H1", "Known")])
         assert src.ingest("H1") == {"history_id": "H1", "deduped": True}
 
-    def test_content_hash_is_not_a_dedupe_key(self):
-        # Honest MVP: dedupe is by history id ONLY. No upload path
-        # persists a content hash onto a history entry and no caller
-        # passes one, so matching entry['content_hash'] could never fire
-        # on real data — it only "worked" against a synthetic fixture.
-        # Lock that the field is ignored so the dead branch can't creep
-        # back in wearing a working feature's clothes.
+    def test_dedupe_by_content_hash(self):
+        # Content-hash reuse is now REAL: the upload path persists a
+        # sha256 onto the completed history entry, so a ref naming that
+        # fingerprint reuses the analyzed row instead of a duplicate.
         src = _src([_hist("H1", "Known", content_hash="sha-abc")])
-        assert src.ingest("sha-abc") == {"history_id": None, "deduped": False}
+        assert src.ingest("sha-abc") == {"history_id": "H1", "deduped": True}
+
+    def test_dedupe_by_content_hash_legacy_sha256_alias(self):
+        # A writer that stamped the fingerprint under the ``sha256`` alias
+        # still matches (both names key the same content-hash branch).
+        src = _src([_hist("H1", "Known", sha256="sha-xyz")])
+        assert src.ingest("sha-xyz") == {"history_id": "H1", "deduped": True}
+
+    def test_history_id_wins_over_content_hash(self):
+        # A ref that happens to equal one row's id and another row's hash
+        # resolves to the id match (checked first, the stronger key).
+        src = _src([
+            _hist("H1", "ById"),
+            _hist("H2", "ByHash", content_hash="H1"),
+        ])
+        assert src.ingest("H1") == {"history_id": "H1", "deduped": True}
+
+    def test_legacy_entry_without_hash_does_not_dedupe(self):
+        # Entries written before the hash was persisted carry none and
+        # must never match the content-hash branch (additive, no crash).
+        src = _src([_hist("H1", "Known")])
+        assert src.ingest("sha-none") == {"history_id": None, "deduped": False}
 
     def test_unknown_ref_is_noop(self):
         src = _src([_hist("H1", "Known")])

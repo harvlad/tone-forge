@@ -270,24 +270,39 @@ class LibrarySource:
         (``history_id: None``) — other sources override ``ingest`` to
         actually queue a job.
 
-        Dedupe is deliberately by history id ONLY. Content-hash reuse
-        (matching by audio fingerprint rather than id) is not wired: it
-        would need a hash persisted on every history entry AND a caller
-        that supplies one, and neither exists — uploads carry only a
-        transient, same-machine ``source_sha256`` that is never written
-        to a history entry, and every ingest caller passes a history id.
-        A branch matching ``entry['content_hash']``/``['sha256']`` could
-        therefore never fire on real data (it only "worked" against a
-        synthetic test fixture), so it is intentionally absent rather
-        than dead code pretending the feature ships.
+        Two dedupe keys, tried in order:
+
+          1. **History id** — the ref names a row directly.
+          2. **Content hash** — the ref is the sha256 of an audio file
+             and a completed analysis already carries that fingerprint.
+             This is now real end-to-end: engine-job completion persists
+             ``content_hash`` onto the history entry (see the upload path
+             + ``engine_job_complete`` in ``tone_forge_api``), so a
+             re-upload of identical bytes reuses the prior analysis
+             instead of manufacturing a duplicate row.
+
+        Legacy history entries written before the hash was persisted
+        simply carry no ``content_hash`` and never match the second
+        branch — dedupe is additive and never crashes on old data. The
+        history the provider yields is already owner-scoped by the
+        composition point, so neither branch can cross users.
         """
         ref = _clean_str(source_ref)
         if not ref:
             return {"history_id": None, "deduped": False}
-        for entry in self._history_provider():
+        entries = list(self._history_provider())
+        for entry in entries:
             eid = _clean_str(entry.get("id"))
             if ref == eid:
                 return {"history_id": eid, "deduped": True}
+        # Content-hash reuse. ``sha256`` is accepted as a legacy alias for
+        # the same field so either name a writer used matches.
+        for entry in entries:
+            chash = _clean_str(entry.get("content_hash")) or _clean_str(entry.get("sha256"))
+            if chash and ref == chash:
+                eid = _clean_str(entry.get("id"))
+                if eid:
+                    return {"history_id": eid, "deduped": True}
         return {"history_id": None, "deduped": False}
 
 
