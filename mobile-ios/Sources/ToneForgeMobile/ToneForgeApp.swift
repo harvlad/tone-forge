@@ -2468,8 +2468,9 @@ public final class AppState: ObservableObject {
 
     static func borrowDonorName(_ packName: String) -> String {
         var n = packName.trimmingCharacters(in: .whitespaces)
-        // Strip a trailing " · kit" (with or without surrounding spaces).
-        if let r = n.range(of: #"\s*·\s*kit\s*$"#, options: .regularExpression) {
+        // Strip a trailing " · kit" (own-song borrow) or " · crate" (Vinyl
+        // Crate), with or without surrounding spaces.
+        if let r = n.range(of: #"\s*·\s*(kit|crate)\s*$"#, options: .regularExpression) {
             n.removeSubrange(r)
         }
         n = n.trimmingCharacters(in: .whitespaces)
@@ -2828,6 +2829,11 @@ public final class AppState: ObservableObject {
     /// re-arrange rather than clip.
     public var hasActiveBorrow: Bool { activeBorrowContext != nil }
 
+    /// Which source a mounted borrow came from — tunes the "Applied: …"
+    /// confirmation (and, for the crate, forces the CC attribution into it).
+    /// Both feed the SAME arrange/download/activate tail (`applyBorrowedPack`).
+    enum BorrowMountSource { case song, crate }
+
     /// Re-arrange the active borrow for a new pad-grid capacity (16 or 64) and
     /// re-activate. 16 = best-of-both (top 8 of each song by score); 64 = full
     /// (current-on-top / divider / donor-below). Reuses the already-downloaded,
@@ -2918,67 +2924,192 @@ public final class AppState: ObservableObject {
                     baseURL: base, analysisId: analysisId,
                     donor: donorId, stem: stem,
                     targetBpm: targetBpm, targetKey: targetKey)
-                // Web-parity 8×8 arrangement: current song's loops on the top
-                // rows, a blank divider row, donor's below (SampleBank —
-                // shared with jam-desktop). No-op on any non-borrow pack, so
-                // this is safe unconditionally. Re-lay BEFORE downloading so
-                // the file map keys off the final padIdx. Stamp the donor's
-                // display name (backend names the pack "<donor> · kit").
                 let donorLabel = Self.borrowDonorName(fetched.name)
-                // Open on the full 8×8 so the divider + donor rows are visible.
-                let pack = SampleBank.arrangeBorrowLayout(
-                    fetched, hostName: hostName, donorName: donorLabel,
-                    cols: 8, rows: 8)
-                let files = await Self.downloadKitSamples(pack: pack, base: base)
-                guard !files.isEmpty else {
-                    self.remixError = "Borrowed loops didn't download."
-                    completion?(.failure(NSError(
-                        domain: "Borrow", code: 2,
-                        userInfo: [NSLocalizedDescriptionKey:
-                            "Borrowed loops didn't download."])))
-                    return
-                }
-                guard self.currentBundle?.analysisId == hostId else {
-                    // Song changed — or a song loaded over the blank
-                    // canvas — while the render was in flight.
-                    completion?(.failure(NSError(
-                        domain: "Borrow", code: 3,
-                        userInfo: [NSLocalizedDescriptionKey:
-                            "Song changed while the borrow loaded."])))
-                    return
-                }
-                // Retain the raw borrow so the 16/64 toggle can RE-ARRANGE (16 =
-                // best-of-both) instead of the 4×4 clipping to the top rows and
-                // dropping the donor. Set BEFORE activateSamplePack, which keeps
-                // the context for a borrow pack (source-tagged) and clears it for
-                // any other pack.
-                self.activeBorrowContext = BorrowContext(
+                await self.applyBorrowedPack(
                     fetched: fetched, base: base, stems: stems,
-                    hostName: hostName, donorName: donorLabel,
-                    donorId: donorId, stem: stem)
-                // Keep the surface on the full 8×8 (mirrors web's "stay in 64 —
-                // never shrink to 16"). The 16|64 toggle still works and now
-                // re-arranges the borrow; this only nudges it up on load.
-                if self.jamSettings.launchpadPadCount != 64 {
-                    self.jamSettings.launchpadPadCount = 64
-                }
-                let resolved = SampleBank.autoKit(pack, padFileURLs: files)
-                await self.sampleScheduler.preloadPackAsync(
-                    resolved, stemFiles: stems)
-                self.activateSamplePack(resolved, stemFiles: stems)
-                if targetBpm != nil || targetKey != nil {
-                    self.remixApplied = "Applied: Borrow — \(pack.name) "
-                        + "on the pads, conformed to your session target."
-                } else if hostId == nil {
-                    // Donor-only (blank canvas): no host song to lock to.
-                    self.remixApplied = "Applied: Borrow — \(pack.name) "
-                        + "on the pads at its own tempo."
-                } else {
-                    self.remixApplied = "Applied: Borrow — \(pack.name) "
-                        + "on the pads, locked to this song's tempo."
-                }
-                Haptics.padTrigger()
-                completion?(.success(fetched))
+                    hostId: hostId, hostName: hostName, donorId: donorId,
+                    donorLabel: donorLabel, stem: stem,
+                    targetBpm: targetBpm, targetKey: targetKey,
+                    attribution: nil, sourceKind: .song, completion: completion)
+            } catch {
+                self.remixError = error.localizedDescription
+                completion?(.failure(error))
+            }
+        }
+    }
+
+    /// The shared post-fetch tail for BOTH own-song borrow and Vinyl Crate
+    /// borrow: arrange the 8×8 (host on top / divider / donor below), download
+    /// the loop files, guard against a song-switch mid-render, retain the raw
+    /// borrow (so the 16/64 toggle can RE-ARRANGE rather than clip), and
+    /// activate the pack. The Swift twin of jam-desktop's `applyBorrowPack` —
+    /// one mount path so a crate loop behaves EXACTLY like an owned-song loop
+    /// (same source-tagged layout, same content-addressed BorrowContext). For a
+    /// crate mount `attribution` carries the CC-BY credit, which the applied
+    /// confirmation MUST surface (a CC-BY duty).
+    @MainActor
+    private func applyBorrowedPack(
+        fetched: SamplePack, base: URL, stems: [String: URL],
+        hostId: String?, hostName: String?, donorId: String, donorLabel: String,
+        stem: String, targetBpm: Double?, targetKey: String?,
+        attribution: String?, sourceKind: BorrowMountSource,
+        completion: ((Result<SamplePack, Error>) -> Void)?
+    ) async {
+        let errDomain = sourceKind == .crate ? "Crate" : "Borrow"
+        // Web-parity 8×8 arrangement: current song's loops on the top rows, a
+        // blank divider row, donor's below (SampleBank — shared with
+        // jam-desktop). No-op on any non-borrow pack. Re-lay BEFORE downloading
+        // so the file map keys off the final padIdx.
+        let pack = SampleBank.arrangeBorrowLayout(
+            fetched, hostName: hostName, donorName: donorLabel,
+            cols: 8, rows: 8)
+        let files = await Self.downloadKitSamples(pack: pack, base: base)
+        guard !files.isEmpty else {
+            self.remixError = "Borrowed loops didn't download."
+            completion?(.failure(NSError(
+                domain: errDomain, code: 2,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Borrowed loops didn't download."])))
+            return
+        }
+        guard self.currentBundle?.analysisId == hostId else {
+            // Song changed — or a song loaded over the blank canvas — while the
+            // render was in flight.
+            completion?(.failure(NSError(
+                domain: errDomain, code: 3,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Song changed while the borrow loaded."])))
+            return
+        }
+        // Retain the raw borrow so the 16/64 toggle can RE-ARRANGE (16 =
+        // best-of-both) instead of clipping to the top rows and dropping the
+        // donor. Keyed on the donor id (a crate id for a crate mount), so the
+        // relayout re-downloads from the pack's own sampleUrls without a
+        // re-fetch. Set BEFORE activateSamplePack, which keeps the context for a
+        // source-tagged borrow pack and clears it for any other pack.
+        self.activeBorrowContext = BorrowContext(
+            fetched: fetched, base: base, stems: stems,
+            hostName: hostName, donorName: donorLabel,
+            donorId: donorId, stem: stem)
+        // Keep the surface on the full 8×8 (mirrors web's "stay in 64 — never
+        // shrink to 16"). The 16|64 toggle still works and re-arranges the
+        // borrow; this only nudges it up on load.
+        if self.jamSettings.launchpadPadCount != 64 {
+            self.jamSettings.launchpadPadCount = 64
+        }
+        let resolved = SampleBank.autoKit(pack, padFileURLs: files)
+        await self.sampleScheduler.preloadPackAsync(resolved, stemFiles: stems)
+        self.activateSamplePack(resolved, stemFiles: stems)
+        // CC-BY: the crate credit must ride into the applied confirmation.
+        let credit = (attribution?.isEmpty == false) ? "\n\(attribution!)" : ""
+        if sourceKind == .crate {
+            if targetBpm != nil || targetKey != nil {
+                self.remixApplied = "Applied: Crate — \(pack.name) on the "
+                    + "pads, conformed to your session target." + credit
+            } else if hostId == nil {
+                self.remixApplied = "Applied: Crate — \(pack.name) on the "
+                    + "pads at its own tempo." + credit
+            } else {
+                self.remixApplied = "Applied: Crate — \(pack.name) on the "
+                    + "pads, locked to this song's tempo." + credit
+            }
+        } else if targetBpm != nil || targetKey != nil {
+            self.remixApplied = "Applied: Borrow — \(pack.name) "
+                + "on the pads, conformed to your session target."
+        } else if hostId == nil {
+            // Donor-only (blank canvas): no host song to lock to.
+            self.remixApplied = "Applied: Borrow — \(pack.name) "
+                + "on the pads at its own tempo."
+        } else {
+            self.remixApplied = "Applied: Borrow — \(pack.name) "
+                + "on the pads, locked to this song's tempo."
+        }
+        Haptics.padTrigger()
+        completion?(.success(fetched))
+    }
+
+    // MARK: - Vinyl Crate (shared CC-BY/CC0 donor pool)
+    //
+    // The crate is the borrow engine's SECOND source: a curated, read-only pool
+    // of legally-clean (CC0 / CC-BY) tracks everyone can dig, session-matched by
+    // the same tempo/harmony borrow engine plus the crate's own weighted signals
+    // (melody/energy/genre/instrumentation). The picker composes two orthogonal
+    // views over one CrateTrack set — `fetchCrateCandidates` ("For your
+    // session", ranked) and `searchCrate` ("Browse the crate", faceted) — and a
+    // pick renders through the SAME mount tail as own-song borrow
+    // (`loadCrateLoops` → applyBorrowedPack). Twin of jam-desktop's
+    // SessionController crate methods.
+
+    /// Session-matched crate suggestions for a stem. The current song (if any)
+    /// is the ranking context; `genreMode` toggles similar/contrast affinity;
+    /// `facets` pre-filter the pool before the weighted ranking (so search
+    /// stacks with match). Empty on any error, like `fetchBorrowCandidates`, so
+    /// the picker degrades to "no matches" rather than crashing.
+    public func fetchCrateCandidates(
+        stem: String, genreMode: CrateGenreMode = .similar,
+        facets: CrateFacetQuery = .init(), limit: Int = 24
+    ) async -> [CrateCandidate] {
+        let resp = try? await CrateClient().fetchCandidates(
+            baseURL: backendBaseURL, sessionId: currentBundle?.analysisId,
+            stem: stem, genreMode: genreMode, facets: facets, limit: limit)
+        return resp?.candidates ?? []
+    }
+
+    /// Faceted crate browse — NO session needed (catalog view). Returns the rows
+    /// PLUS the per-facet counts so the browse panel can render live facet
+    /// chips. nil on error so the panel shows "couldn't reach the crate".
+    public func searchCrate(
+        facets: CrateFacetQuery, limit: Int = 40, offset: Int = 0
+    ) async -> CrateSearchResponse? {
+        return try? await CrateClient().search(
+            baseURL: backendBaseURL, facets: facets, limit: limit, offset: offset)
+    }
+
+    /// Render + mount a crate track's loops onto the pads — the crate twin of
+    /// `loadBorrowLoops`. The crate is the DONOR, the loaded song (if any) the
+    /// HOST: loops tempo-matched + key-conformed to the session (or the Session
+    /// target when on); the host is never retimed/repitched. `attribution` is
+    /// the CC credit, threaded into the applied confirmation (CC-BY duty).
+    /// Reuses `borrowBusyDonor` so the picker's per-row spinner + single-flight
+    /// guard are the same as own-song borrow.
+    public func loadCrateLoops(
+        trackId: String, stem: String, trackName: String? = nil,
+        attribution: String? = nil,
+        completion: ((Result<SamplePack, Error>) -> Void)? = nil
+    ) {
+        guard borrowBusyDonor == nil else {
+            completion?(.failure(NSError(
+                domain: "Crate", code: 1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Another borrow is loading."])))
+            return
+        }
+        borrowBusyDonor = trackId
+        remixError = nil
+        let base = backendBaseURL
+        let stems = currentStemLocalURLs
+        let hostId = currentBundle?.analysisId       // nil = blank canvas
+        let targetBpm = sessionBorrowBpm
+        let targetKey = sessionBorrowKey
+        let hostName = currentBundle?.meta.title
+        Task { @MainActor in
+            defer { self.borrowBusyDonor = nil }
+            do {
+                let fetched = try await CrateClient().fetchBorrowPack(
+                    baseURL: base, trackId: trackId, sessionId: hostId,
+                    stem: stem, targetBpm: targetBpm, targetKey: targetKey)
+                // Backend names a crate pack "<title> · crate"; strip the suffix
+                // for the per-pad source label (borrowDonorName handles " · kit"
+                // and any trailing tag). Prefer the explicit track title.
+                let donorLabel = trackName?.isEmpty == false
+                    ? trackName! : Self.borrowDonorName(fetched.name)
+                await self.applyBorrowedPack(
+                    fetched: fetched, base: base, stems: stems,
+                    hostId: hostId, hostName: hostName, donorId: trackId,
+                    donorLabel: donorLabel, stem: stem,
+                    targetBpm: targetBpm, targetKey: targetKey,
+                    attribution: attribution, sourceKind: .crate,
+                    completion: completion)
             } catch {
                 self.remixError = error.localizedDescription
                 completion?(.failure(error))
