@@ -18,10 +18,19 @@
 #       on CPU)
 #     - the LEAN requirements-worker.txt (drops fastapi/uvicorn/boto3/asyncpg…)
 #     - prefetch demucs + beat-this + all-in-one so nothing downloads mid-run
-#   It deliberately does NOT install basic-pitch/onnxruntime: the crate config
-#   (PipelineConfig.crate) sets extract_midi=False, so the per-stem torchcrepe/
-#   basic-pitch MIDI stage — ~62% of a full run and the reason the old run blew
-#   the watchdog — never executes. That is the single biggest speedup here.
+#     - basic-pitch via its ONNX-GPU backend (NO TensorFlow), matching the prod
+#       worker — see step 2b.
+#
+#   MIDI is back ON: PipelineConfig.crate is full-capture (extract_midi=True,
+#   use_ensemble=True) as of the never-compromise-extraction rule. The earlier
+#   "MIDI is the ~62% CPU killer, drop it" reasoning was written against a STALE
+#   claim — the ensemble was already GPU-accelerated on 2026-09-07 (torchcrepe
+#   uses CUDA in midi/ensemble_extractor + gpu_extractor; basic_pitch takes the
+#   ONNX CUDA execution provider once TensorFlow is absent). On an A40 the
+#   ensemble is fast, so it stays IN. This bootstrap therefore MUST install the
+#   ONNX-GPU basic_pitch deps, or the polyphonic detector silently drops out of
+#   the ensemble (guitar/other degrade to pYIN) on any pod not using the baked
+#   prod RUNPOD_IMAGE.
 #
 # Usage: bash crate_pod_bootstrap.sh <shard_i> <N> <concurrency> <watchdog_sec>
 #        (run from the repo's backend/ dir)
@@ -65,11 +74,29 @@ print("pip constraint:", open("/tmp/jamn-pip-constraints.txt").read().strip())
 PYCON
 export PIP_CONSTRAINT=/tmp/jamn-pip-constraints.txt
 
-# 2. Lean analysis deps (no web/db stack, no basic-pitch — MIDI is off).
+# 2. Lean analysis deps (no web/db stack).
 REQ=requirements.txt
 [[ -f requirements-worker.txt ]] && REQ=requirements-worker.txt
 echo "==> installing deps from $REQ"
 python -m pip install -q -r "$REQ" 2>&1 | tail -3 || true
+
+# 2b. basic-pitch via its ONNX backend (NO TensorFlow) — the polyphonic MIDI
+#     detector the full-fidelity ensemble needs for guitar/other. Mirrors the
+#     proven prod recipe (runpod_analysis_worker.sh): on a CUDA host install
+#     onnxruntime-GPU (not the CPU build) so basic_pitch picks the CUDA
+#     execution provider automatically, and install basic-pitch --no-deps so its
+#     base install_requires can't drag FULL TensorFlow in — with TF present
+#     basic_pitch prefers the TF-CPU backend and the polyphonic pass runs on CPU
+#     even with onnxruntime-gpu installed. Best-effort: on failure the ensemble
+#     falls back to pYIN (lower fidelity) but the shard still completes.
+ORT_PKG=onnxruntime
+if command -v nvidia-smi >/dev/null 2>&1; then
+  ORT_PKG=onnxruntime-gpu
+  python -m pip uninstall -y onnxruntime tensorflow >/dev/null 2>&1 || true
+fi
+{ python -m pip install --no-deps basic-pitch \
+    && python -m pip install mir_eval resampy "$ORT_PKG"; } 2>&1 | tail -3 \
+  || echo "basic_pitch optional install skipped (pYIN fallback stays in effect)"
 
 # 3. Prefetch models (demucs + beat-this + all-in-one) so none download mid-run
 #    and blow the watchdog. Returns in seconds when the caches are warm.
@@ -91,7 +118,8 @@ torch.cuda.synchronize(); print("GPU MATMUL OK:", b, "|", torch.cuda.get_device_
 PY
 
 # 4. Run the shard under the watchdog. TONEFORGE_EXPECT_GPU (set by the fleet)
-#    makes ingest_crate hard-exit if CUDA vanished; the crate config skips MIDI.
+#    makes ingest_crate hard-exit if CUDA vanished — which matters now that the
+#    crate config runs the full GPU-accelerated ensemble MIDI stage.
 echo "==> ingest shard ${SHARD_I}/${N} (concurrency=${CONCURRENCY}, watchdog=${WATCHDOG_SEC}s)"
 timeout "${WATCHDOG_SEC}" python scripts/ingest_crate.py "${MANIFEST}" \
     --shard "${SHARD_I}/${N}" --concurrency "${CONCURRENCY}"

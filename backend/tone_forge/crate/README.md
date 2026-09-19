@@ -28,9 +28,11 @@ make a fleet run finish faster**.
 - **Speed is a logistics problem, not a quality dial.** If a run is too slow:
   canary 1–2 pods to measure real per-track time, size the pod watchdog
   (`WATCHDOG_SEC`) to fit, add pods, or **make the slow stage fast** — never
-  delete or downgrade a signal. The known offender is the torchcrepe ensemble
-  MIDI path running CPU-bound on the pod (~17 min/track); the fix is to
-  GPU-accelerate it on the A40, **not** to fall back to basic-pitch.
+  delete or downgrade a signal. The old offender was the ensemble MIDI path
+  (torchcrepe + basic_pitch) running CPU-bound on the pod (~17 min/track); it
+  was GPU-accelerated on 2026-09-07 (torchcrepe → CUDA, basic_pitch → ONNX-GPU
+  with TensorFlow kept off) and now runs on the A40, so the fix was to
+  GPU-accelerate it, **not** to fall back to basic-pitch or drop MIDI.
 - **Pinned by CI.** `tests/test_crate.py::TestCrateExtractionQuality` asserts
   the crate captures everything `deep()` does for every analysis-signal flag —
   a change that drops melody/stems, reverts the ensemble to basic-pitch, or

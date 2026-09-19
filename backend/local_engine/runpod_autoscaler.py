@@ -403,22 +403,20 @@ def ensure_worker(queue_depth: int = 1) -> Optional[str]:
         "env": _worker_env(),
         "dockerStartCmd": _start_argv(),
     }
-    # CPU vs GPU worker. On a RunPod (Linux/CUDA) host, separation is the only
-    # stage a GPU actually accelerates — but NOT because it is the only
-    # GPU-capable one. torchcrepe MIDI extraction is ~62% of a run and is the
-    # heaviest stage by far, and `midi/gpu_extractor.py` never asks for CUDA:
-    # its device is `"mps" if MPS_AVAILABLE else "cpu"` and no call site
-    # overrides it, so on a CUDA host that stage runs on CPU whatever pod you
-    # rent. Only `stem_separator.py` does CUDA > MPS > CPU.
-    #
-    # So the "~90% CPU-bound" that once justified this flag is a property of
-    # that gap, not of the pipeline: renting a GPU here currently buys the
-    # separation stage and nothing else, which makes a CPU pod the better
-    # trade at ~$0.05-0.10/hr vs $0.44 — and it sidesteps the GPU failure
-    # modes (CUDA-fork crash, driver/runtime mismatch silently dropping the
-    # device). Wiring CUDA into gpu_extractor would invert this: the 62%
-    # stage would move onto the GPU and a GPU pod would start earning its
-    # price. Re-measure before flipping back on that basis alone.
+    # CPU vs GPU worker. GPU now accelerates BOTH heavy stages, so a GPU pod
+    # earns its price. The torchcrepe MIDI ensemble (~62% of a run, the heaviest
+    # stage) was CPU-bound only because `midi/gpu_extractor.py` +
+    # `midi/ensemble_extractor.py` never asked for CUDA — their device was
+    # `"mps" if MPS_AVAILABLE else "cpu"`. That was fixed 2026-09-07
+    # (commit 08182051): both now do CUDA > MPS > CPU (BEST_DEVICE), and
+    # basic_pitch's polyphonic pass takes the ONNX CUDA execution provider once
+    # TensorFlow is kept off the pod (commit 5a6b4d8b). So the "~90% CPU-bound"
+    # that once justified defaulting to CPU no longer holds: on a CUDA host the
+    # separation stage AND the MIDI ensemble run on the GPU. Default is GPU.
+    # A CPU pod (~$0.05-0.10/hr vs $0.44) still sidesteps the GPU failure modes
+    # (CUDA-fork crash, driver/runtime mismatch silently dropping the device) —
+    # the boot self-test + TONEFORGE_EXPECT_GPU reap those pods instead. Keep
+    # CPU only for the mobile backend, where deep MIDI is not on the path.
     # Set RUNPOD_COMPUTE=CPU for the mobile backend.
     if os.environ.get("RUNPOD_COMPUTE", "GPU").upper() == "CPU":
         body["computeType"] = "CPU"

@@ -101,9 +101,12 @@ def _make_analyzer(config_factory=None):
     persist it, and the crate match's melody term needs it — when MIDI is on).
 
     ``config_factory`` selects the analysis depth; it defaults to
-    ``PipelineConfig.crate`` — stems + graph + tempo/key/chords/sections/energy,
-    with the ~62%-of-a-run per-stem MIDI extraction SKIPPED (melody deferred).
-    Pass ``PipelineConfig.deep`` to restore the full melody-bearing analysis."""
+    ``PipelineConfig.crate`` — full-capture: stems + graph + tempo/key/chords/
+    sections/energy AND the per-stem MIDI/melody ensemble (extract_midi=True,
+    use_ensemble=True). The ensemble is GPU-accelerated on a CUDA pod (torchcrepe
+    on CUDA + basic_pitch ONNX-GPU), so it is no longer the CPU wall it was
+    before 2026-09-07. ``PipelineConfig.deep`` is the same analysis without the
+    crate stem-serve base."""
     from tone_forge.analysis.melody_sequence import build_melody_sequence
     from tone_forge.midi.melody_split import annotate_roles
     from tone_forge.performance import serve as perf_serve
@@ -249,10 +252,10 @@ def main() -> int:
                     help="process only shard I of N, round-robin: --shard 0/4. "
                          "For fanning the manifest across parallel GPU pods.")
     ap.add_argument("--full", action="store_true",
-                    help="use the full PipelineConfig.deep() (per-stem MIDI + "
-                         "melody lane) instead of the lighter crate config. "
-                         "Slower (~62%% more per track) but restores the melody "
-                         "match term. Default is the crate config (melody deferred).")
+                    help="use PipelineConfig.deep() instead of the crate config. "
+                         "Both run the full per-stem MIDI/melody ensemble; the "
+                         "crate config just adds the stem-serve base. Kept for "
+                         "parity checks against the plain deep() path.")
     args = ap.parse_args()
 
     metas = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
@@ -284,7 +287,7 @@ def main() -> int:
     from tone_forge.unified_pipeline import PipelineConfig
     config_factory = PipelineConfig.deep if args.full else PipelineConfig.crate
     print(f"[config] analysis={'deep' if args.full else 'crate'} "
-          f"(midi/melody {'ON' if args.full else 'OFF'})")
+          f"(midi/melody ON — GPU ensemble on a CUDA pod)")
     analyzer = _make_analyzer(config_factory)
     ok, fail = run_batch(metas, analyzer=analyzer, downloader=_download,
                          concurrency=args.concurrency, crate_dir=crate_dir)

@@ -248,15 +248,21 @@ class PipelineConfig:
         dropping it at ingest.
 
         History: the first 40-track run used deep(), whose MIDI path runs a
-        per-stem torchcrepe ENSEMBLE that runpod_autoscaler.py documents as
-        ~62% of a run and that does NOT use CUDA on a RunPod host — CPU-bound
-        even on an A40, ~17 min/track, blowing the pod watchdog. TWO wrong fixes
-        were rejected: (v1) dropping extract_midi amputated melody; (v2) forcing
-        basic-pitch-only downgraded melody fidelity. The RULE says the fix for a
-        slow-but-correct stage is logistics, never a quality cut: sit under a
-        larger `WATCHDOG_SEC`, spread across more pods / fewer tracks per pod,
-        and above all GPU-accelerate the torchcrepe ensemble on the A40 (the
-        real win — full fidelity AND fast). See scripts/crate_fleet.py.
+        per-stem ENSEMBLE (torchcrepe + basic_pitch) that was ~62% of a run and
+        blew the pod watchdog at ~17 min/track. TWO wrong fixes were rejected:
+        (v1) dropping extract_midi amputated melody; (v2) forcing basic-pitch-
+        only downgraded melody fidelity. The RULE says the fix for a slow-but-
+        correct stage is logistics, never a quality cut. The real win — full
+        fidelity AND fast — is GPU-accelerating the ensemble on the A40, and
+        that ALREADY LANDED (2026-09-07, commits 08182051 + 5a6b4d8b): torchcrepe
+        now selects CUDA > MPS > CPU (midi/ensemble_extractor.CrepeDetector,
+        midi/gpu_extractor.BEST_DEVICE) and basic_pitch takes the ONNX CUDA
+        execution provider once TensorFlow is kept off the pod (onnxruntime-gpu
+        + basic-pitch --no-deps in Dockerfile.worker / runpod_analysis_worker.sh
+        / crate_pod_bootstrap.sh). So the ensemble is no longer CPU-bound on a
+        RunPod GPU host; the earlier "does NOT use CUDA" note was stale. Sit
+        under a `WATCHDOG_SEC` sized for the GPU ensemble and keep MIDI IN. See
+        scripts/crate_fleet.py.
 
         CAPTURED (the full deep() signal set — every crate match/borrow/rank
         signal AND every metric that could ever assist matching):
