@@ -1,9 +1,20 @@
 // CrateModelsDecodeTests.swift
 //
-// Pins the pure crate wire decode + facet-query builder (CrateModels.swift),
-// the same discipline that caught the borrow source/stem regressions: the
-// decode + request-building live in JamDesktopCore precisely so they fail CI
-// here rather than in the user's picker.
+// Pins the pure crate wire decode + facet-query builder from the DESKTOP test
+// target's vantage point, the same discipline that caught the borrow
+// source/stem regressions: the decode + request-building fail CI here rather
+// than in the user's picker.
+//
+// The `Crate*` DTOs are NOT defined in JamDesktopCore any more — they were
+// briefly double-defined here AND in ToneForgeEngine, and because the desktop
+// app target imports both modules every Crate name went ambiguous (~358
+// "ambiguous for type lookup" errors on a clean build). The canonical
+// definition now lives ONCE in the shared ToneForgeEngine (the module both iOS
+// and desktop already depend on); this file imports it. Because the file still
+// imports BOTH modules and names the types UNQUALIFIED, it doubles as a
+// compile-time ambiguity guard: reintroduce a JamDesktopCore `Crate*` type and
+// this test target stops compiling. See CrateDedupeGuardTests for the explicit
+// source-scan guard.
 //
 // What must hold:
 //   • a candidates row parses from EITHER `trackId` or the borrow-superset
@@ -17,6 +28,7 @@
 //     must produce an identical request on every surface (parity rule 4).
 
 import XCTest
+import ToneForgeEngine
 @testable import JamDesktopCore
 
 final class CrateModelsDecodeTests: XCTestCase {

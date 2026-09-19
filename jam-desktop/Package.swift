@@ -80,7 +80,13 @@ let package = Package(
         ),
         .testTarget(
             name: "JamDesktopCoreTests",
-            dependencies: ["JamDesktopCore"],
+            dependencies: [
+                "JamDesktopCore",
+                // The Crate DTOs live in the shared engine now (see
+                // CrateDedupeGuardTests): the decode + ambiguity-guard tests
+                // import it directly rather than lean on a transitive import.
+                .product(name: "ToneForgeEngine", package: "mobile-ios"),
+            ],
             path: "Tests/JamDesktopCoreTests",
             resources: [.copy("Fixtures")]
         ),
