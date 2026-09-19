@@ -225,6 +225,54 @@ class PipelineConfig:
             stem_serve_url_base="/api/admin/serve-file",  # Default for web playback
         )
 
+    @classmethod
+    def crate(cls) -> "PipelineConfig":
+        """Vinyl-Crate seed ingest — everything the crate needs, nothing it
+        doesn't. Built to make a fleet run *complete*: the first 40-track run
+        failed because deep() runs per-stem torchcrepe MIDI extraction, which
+        ``local_engine/runpod_autoscaler.py`` documents as ~62% of a run and,
+        worse, the ensemble/gpu MIDI path does NOT use CUDA on a RunPod host —
+        so that 62% is CPU-bound even on a rented A40. At ~17 min/track that
+        blew the 1-hour pod watchdog before any shard uploaded.
+
+        KEPT (what the crate consumes — see crate/ingest.features_from_result
+        and the blind gate):
+          - stems (force_stem_separation): borrow curates loops from them, and
+            the blind gate's curated kit is built from them. GPU-accelerated.
+          - chord lane: the pc_histogram (harmony match term) folds the chord
+            ribbon — borrow._song_pc_histogram reads chords, not MIDI.
+          - beats/tempo, detected_key (+ strength), sections + energy_curve:
+            all cheap, all feed CrateFeatures and the performance_graph.
+
+        SKIPPED (dominant or unused for the crate seed):
+          - extract_midi: the ~62% CPU killer. Dropping it defers the MELODY
+            match term ONLY — crate/match.py weights signals by confidence and
+            renormalizes over Σ(w·c), so a crate track with no melody lane is
+            ranked fairly on tempo/key/harmony/energy, not penalized (weight
+            0.15 melody term simply stays inactive). Re-enable later with
+            extract_midi=True + use_ensemble=False (basic-pitch only, no
+            torchcrepe) to restore melody without the ensemble cost.
+          - analyze_quality / provenance / synth_behavior: reconstruction-tone
+            analysis the crate never reads (the graph + kit need none of it).
+          - waveform: the crate stores no per-track viz waveform.
+
+        Kept include_profiling=True so the pod prints the per-stage breakdown
+        for the next capacity decision.
+        """
+        return cls(
+            mode=AnalysisMode.DEEP,
+            separate_stems=True,
+            force_stem_separation=True,   # borrow + blind-gate kit need stems
+            extract_midi=False,           # the ~62% CPU killer — defer melody
+            use_ensemble=False,           # moot with MIDI off; explicit for clarity
+            analyze_quality=False,        # reconstruction-tone analysis — unused
+            include_provenance=False,
+            detect_synth_behavior=False,
+            include_waveform=False,       # crate stores no viz waveform
+            include_profiling=True,       # keep the per-stage breakdown on the pod
+            stem_serve_url_base="/api/admin/serve-file",
+        )
+
 
 def select_pipeline_config(
     *, analysis_mode: Optional[str], fast_mode: bool

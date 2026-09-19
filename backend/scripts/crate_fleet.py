@@ -44,11 +44,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # --- knobs (top-of-file constants) -----------------------------------------
-N = 4                                   # number of GPU pods / shards
+N = 8                                   # number of GPU pods / shards
 GPU_TYPE = "NVIDIA A40"                 # 48GB — the value pick for demucs
 BRANCH = "main"                         # pods clone this ref
 FLEET_PREFIX = "jamn-crate-seed"        # pod name prefix (teardown scans on it)
-WATCHDOG_SEC = 3600                     # per-pod hard cap on the ingest
+WATCHDOG_SEC = 5400                     # per-pod hard cap on the ingest
 POLL_DEADLINE_SEC = 5400               # driver gives up waiting after this
 CONCURRENCY = 2                         # per-pod --concurrency (2 demucs at once)
 
@@ -94,8 +94,15 @@ def api(method: str, path: str, body: dict | None = None) -> dict:
 
 # --- pod bootstrap (dockerStartCmd) ----------------------------------------
 def bootstrap(shard_i: int, repo_url: str, engine: str) -> list:
-    """Self-terminating bootstrap for pod `shard_i`. trap EXIT self-deletes;
-    the ingest runs under a 1h timeout; the crate/ shard is shipped to R2."""
+    """Self-terminating bootstrap for pod `shard_i`.
+
+    The trap-EXIT self-delete and the git clone stay HERE (in dockerStartCmd)
+    so the pod tears itself down even if the clone fails. Everything heavy —
+    ffmpeg + the torch-2.8/cu126 lock + lean deps + model prefetch + GPU
+    self-test + the timeout-guarded ingest + the R2 shard upload — lives in the
+    committed scripts/crate_pod_bootstrap.sh (mirrors the proven prod worker
+    bootstrap; kept out of this f-string so its heredocs' braces don't fight
+    Python formatting, and so it's lintable/testable on its own)."""
     inner = f"""
 set -uo pipefail
 trap 'curl -s -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" -H "User-Agent: {UA}" {REST}/pods/$RUNPOD_POD_ID >/dev/null 2>&1 || true' EXIT
@@ -103,14 +110,7 @@ echo "==== crate shard {shard_i}/{N} start $(date -u) ===="
 cd /workspace && rm -rf tone-forge
 git clone -b {BRANCH} --depth 1 "$JAMN_REPO_URL" tone-forge || exit 1
 cd tone-forge/backend
-pip install -q -r requirements.txt 2>&1 | tail -3 || true
-timeout {WATCHDOG_SEC} python scripts/ingest_crate.py {MANIFEST} --shard {shard_i}/{N} --concurrency {CONCURRENCY}
-tar czf /tmp/shard.tgz -C data crate
-python - <<PY
-from tone_forge import r2_storage as r2
-r2._client().upload_file("/tmp/shard.tgz", r2.bucket_name(), "crate-shards/shard-{shard_i}.tgz")
-print("shard {shard_i} uploaded to R2")
-PY
+bash scripts/crate_pod_bootstrap.sh {shard_i} {N} {CONCURRENCY} {WATCHDOG_SEC}
 echo "==== crate shard {shard_i}/{N} done $(date -u) ===="
 """.strip()
     return ["bash", "-lc", inner]
