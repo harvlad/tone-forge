@@ -72,6 +72,14 @@ struct TransportRow: View {
                 .font(TFTheme.readout)
                 .foregroundStyle(TFTheme.textSecondary)
         }
+        // Pin the whole transport bar to a fixed height so NOTHING inside
+        // it can change the bar's height — in particular the RecordToggle
+        // swapping from the idle dot to the live recording meter+elapsed.
+        // The RecordToggle already fixes its own height, but pinning the
+        // row is the belt-and-suspenders guarantee against any child (a
+        // growing meter, a taller glyph) reflowing the bar. 48pt clears
+        // the 38pt play glyph with margin; the row centers its contents.
+        .frame(height: 48)
         .padding(.horizontal, 16)
     }
 
