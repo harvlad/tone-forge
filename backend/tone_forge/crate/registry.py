@@ -126,15 +126,28 @@ def license_from_dict(d: Dict) -> CrateLicenseRecord:
 
 
 def _parse_license(raw) -> CrateLicense:
+    """Resolve a license spelling to the coarse CrateLicense the crate models.
+
+    The enum only distinguishes CC0 / CC-BY / CC-BY-SA because those are the
+    axes that matter for admission + export encumbrance; the exact CC *version*
+    (2.5 / 3.0 / 4.0) is not modelled — ccMixter is mostly CC-BY-3.0 (one
+    CC-BY-2.5), Jamendo CC-BY-3.0, Kevin MacLeod CC-BY-4.0, and all three are
+    plain attribution, so every "CC-BY-x.y" collapses to CC_BY. Matching is
+    version-agnostic and, critically, tests ShareAlike BEFORE plain attribution
+    so a "CC-BY-SA-3.0" is never misfiled as unencumbered CC-BY (that would drop
+    the copyleft obligation and let it ship in a "clean export").
+    """
     if isinstance(raw, CrateLicense):
         return raw
     s = str(raw or "").strip().upper().replace(" ", "")
-    # Accept the enum values and the loose catalog aliases.
-    if s in ("CC0", "CC-0", "PUBLICDOMAIN"):
+    if s in ("CC0", "CC-0", "PUBLICDOMAIN") or s.startswith("CC0"):
         return CrateLicense.CC0
-    if s in ("CC-BY-SA-4.0", "CC-BY-SA", "BY-SA"):
+    # ShareAlike first — "CC-BY-SA-4.0" contains "CC-BY" and would otherwise
+    # match the attribution branch below. Any x.y spelling counts.
+    if "BY-SA" in s:
         return CrateLicense.CC_BY_SA
-    # Default the ambiguous / bare "CC-BY" to plain attribution (4.0).
+    # Any attribution-only spelling: CC-BY, CC-BY-2.5, CC-BY-3.0, CC-BY-4.0.
+    # The bare/ambiguous "CC-BY" defaults here too (plain attribution).
     return CrateLicense.CC_BY
 
 

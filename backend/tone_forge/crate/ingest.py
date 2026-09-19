@@ -43,8 +43,12 @@ from tone_forge.crate import registry as _reg
 from tone_forge.performance import borrow
 
 # Only these platforms carry the CC license that authorizes self-hosting +
-# export. Cambridge-MT is deliberately absent.
-SOURCE_ALLOWLIST = ("jamendo", "fma", "ccmixter")
+# export. Cambridge-MT is deliberately absent. ``incompetech`` (Kevin MacLeod,
+# incompetech.com / filmmusic.io) is a first-party CC-BY-4.0 catalog — the
+# artist self-licenses every piece attribution-only — so it clears the same
+# self-host + export bar as the other three. The allowlist stays the hard
+# compliance gate: a track whose source is not here never spends a GPU-minute.
+SOURCE_ALLOWLIST = ("jamendo", "fma", "ccmixter", "incompetech")
 
 _LICENSE_URLS = {
     CrateLicense.CC0: "https://creativecommons.org/publicdomain/zero/1.0/",
@@ -261,8 +265,12 @@ def ingest_track(meta: Dict, *, analyzer: Analyzer, downloader: Downloader,
     stage = Path(staging_dir) if staging_dir else (root / "_staging")
     stage.mkdir(parents=True, exist_ok=True)
 
-    # 1) DOWNLOAD + hash (dedupe + provenance).
-    src_url = str(meta["source_url"])
+    # 1) DOWNLOAD + hash (dedupe + provenance). The audio lives at
+    #    ``download_url``; ``source_url`` is the human track page kept for the
+    #    license record's provenance (attribution links there, not the raw
+    #    stream). Fall back to source_url so legacy manifests that only carry
+    #    the one URL still work.
+    src_url = str(meta.get("download_url") or meta.get("source_url") or "")
     local = downloader(src_url, stage)
     content_hash = _sha256_file(Path(local))
 

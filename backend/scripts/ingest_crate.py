@@ -29,6 +29,16 @@ import sys
 import urllib.request
 from pathlib import Path
 from typing import Dict
+from urllib.parse import urlsplit
+
+# ccMixter (and some CDNs) 403 the default Python-urllib User-Agent as a bot.
+# A browser UA + a same-origin Referer returns 206 audio/mpeg from ccMixter
+# (verified); Jamendo/incompetech serve fine with a plain fetch but the browser
+# UA is harmless there, so send it unconditionally.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
 
 # Make ``tone_forge`` importable when run from backend/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -42,7 +52,14 @@ def _download(url: str, staging_dir: Path) -> Path:
     staging_dir.mkdir(parents=True, exist_ok=True)
     name = url.split("/")[-1].split("?")[0] or "crate_track"
     dest = staging_dir / name
-    with urllib.request.urlopen(url, timeout=120) as resp, open(dest, "wb") as fh:
+    parts = urlsplit(url)
+    referer = f"{parts.scheme}://{parts.netloc}/" if parts.scheme else ""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": _BROWSER_UA,
+        "Referer": referer,
+        "Accept": "audio/mpeg,audio/*;q=0.9,*/*;q=0.8",
+    })
+    with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as fh:
         fh.write(resp.read())
     return dest
 

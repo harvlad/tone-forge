@@ -117,6 +117,25 @@ def test_license_alias_parsing():
     assert creg._parse_license("CC0") == CrateLicense.CC0
 
 
+def test_license_version_agnostic_parsing():
+    # The crate seed manifest carries real CC versions (ccMixter is mostly
+    # CC-BY-3.0 with one CC-BY-2.5; Kevin MacLeod is CC-BY-4.0). Every
+    # attribution-only spelling — regardless of version or spacing — collapses
+    # to the coarse CC_BY the model uses.
+    for raw in ("CC-BY-3.0", "CC-BY-2.5", "CC-BY-2.0", "CC BY 3.0", "cc-by-3.0"):
+        assert creg._parse_license(raw) == CrateLicense.CC_BY, raw
+    # ShareAlike is matched at ANY version and BEFORE plain attribution, so a
+    # versioned SA is never misfiled as unencumbered CC-BY (which would let a
+    # copyleft track ride a "clean export").
+    for raw in ("CC-BY-SA-3.0", "CC-BY-SA-2.5", "CC-BY-SA-4.0"):
+        assert creg._parse_license(raw) == CrateLicense.CC_BY_SA, raw
+    # CC0 tolerates a trailing version too.
+    assert creg._parse_license("CC0-1.0") == CrateLicense.CC0
+    # And the encumbrance derivation follows the resolved id, not the spelling.
+    assert creg.encumbered_for(creg._parse_license("CC-BY-3.0")) is False
+    assert creg.encumbered_for(creg._parse_license("CC-BY-SA-3.0")) is True
+
+
 def test_track_round_trips_through_dict():
     t = _track("crate:jamendo:9", genre="funk", tags=("groovy", "horns"),
                license_id=CrateLicense.CC_BY_SA)
