@@ -118,11 +118,26 @@ for d in dirs:  # de-dup, keep order, keep only dirs that actually exist
 print(":".join(out))
 PY
 _CUDA_LIBS="$(python /tmp/jamn_cuda_libdirs.py 2>/dev/null)"
-if [ -n "${_CUDA_LIBS}" ]; then
-  export LD_LIBRARY_PATH="${_CUDA_LIBS}:${LD_LIBRARY_PATH:-}"
-  echo "==> LD_LIBRARY_PATH prepended with cuDNN/CUDA lib dirs: ${_CUDA_LIBS}"
+# The pip-package search above misses the OFFICIAL pytorch conda image
+# (pytorch/pytorch:2.8.0-cuda12.6-cudnn9-runtime = the baked RUNPOD_IMAGE):
+# there cuDNN 9 + the CUDA 12 runtime live in the conda env's own lib
+# (/opt/conda/lib, sys.prefix/lib), NOT in pip nvidia-*-cu12 packages. Canary 3
+# proved it — the CUDA-12 onnxruntime reinstalled fine but STILL fell to CPU
+# ("CUDA 12.x ... make sure they're in the PATH") because libcudnn.so.9 wasn't
+# on the path. So ALSO locate the real .so files wherever they sit and add
+# their dirs — a find can't be fooled by image layout.
+_FOUND_LIBS=""
+for _soname in libcudnn.so.9 libcudart.so.12 libcublas.so.12 libcublasLt.so.12 libcufft.so.11; do
+  _sopath="$(find /opt/conda /usr/local /usr/lib /usr/lib64 -name "${_soname}" 2>/dev/null | head -1)"
+  [ -n "${_sopath}" ] && _FOUND_LIBS="$(dirname "${_sopath}"):${_FOUND_LIBS}"
+done
+_ALL_LIBS="${_CUDA_LIBS}:${_FOUND_LIBS}"
+_ALL_LIBS="${_ALL_LIBS#:}"; _ALL_LIBS="${_ALL_LIBS%:}"
+if [ -n "${_ALL_LIBS}" ]; then
+  export LD_LIBRARY_PATH="${_ALL_LIBS}:${LD_LIBRARY_PATH:-}"
+  echo "==> LD_LIBRARY_PATH prepended with cuDNN/CUDA lib dirs: ${_ALL_LIBS}"
 else
-  echo "WARN: no pip CUDA lib dirs found — onnxruntime CUDA EP may not resolve its libs"
+  echo "WARN: no cuDNN/CUDA lib dirs found — onnxruntime CUDA EP may not resolve its libs"
 fi
 
 # 2. Lean analysis deps (no web/db stack).
