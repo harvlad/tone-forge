@@ -1529,3 +1529,68 @@ by ChopPlayerBurstTests (blocked-main fire + adoption, stale-plan /
 stale-fire invalidation, cost bound, era join), USBLaunchpadTransport-
 Tests (pre-hop down-tap with stamps), MIDIKeyboardTransportTests
 (routed-pads-only pre-hop tap, lane agreement).
+
+## D-039: One "Songs" page supersedes the Recent-Songs list AND the Band Room as the library destination
+
+**Date:** 2026-09-19
+**Decision:** the library now has ONE destination — a full-screen
+`.songs` page (`SongsPageView`, `SongsModel` in `JamDesktopCore/
+Songs/`): a searchable / filterable / sortable table whose rows are the
+UNION of finished analyses and in-flight jobs. The Band Room card stack
+(`.bandRoom` / `BandRoomView`) is no longer a navigation destination:
+"View all songs", the toolbar analyses-in-progress button, and every
+Intake post-submit route now land on `.songs`. In-flight analyses stop
+being a separate place and become a Status COLUMN + a "Processing (N)"
+facet chip. `.bandRoom` and `BandRoomView` are RETAINED (a fallback
+surface; the enum case stays for older persisted state) but removed
+from the view switcher — do not re-add it (see the guard comment on
+`JamView.bandRoom`).
+
+**Structure — why a union, not two lists.** The backend historically
+splits "done" (`/api/history`) from "in progress" (`/api/jobs`); the
+Songs table is their union keyed so a completing job COLLAPSES into its
+history row. On desktop this is two layers:
+- **Server union** — `SongsModel` fetches `GET /api/library/search`
+  (LibrarySource wraps `_load_history()` + the jobs merge), sorted
+  BEFORE paging behind an OPAQUE cursor so a background ingest inserting
+  a row can't shift the window. Facets (genre/key/tempo/mood/tags/
+  status) come back in the same page.
+- **Live overlay** — the desktop's own `AnalysisQueueModel` is overlaid
+  by the PURE `SongsModel.merged`: a just-submitted upload shows as a
+  processing row INSTANTLY (before the server union catches up), a
+  running row's percent tracks the fresher SSE, and a `.done(historyId)`
+  live item defers to the server's full-metadata history row keyed on
+  the same id — the collapse point. A metadata facet (or a non-
+  processing status filter) suppresses the synthetic live rows, since
+  the server would filter them out anyway.
+
+**Ingest is the ONE dedupe door.** Retry/re-add goes through
+`POST /api/library/ingest {source, source_ref}`; the MVP library case
+is a no-op that returns the existing `history_id` (content-hash dedupe
+reuses an already-analyzed track). CC sources return a fresh `job_id`
+later — same door.
+
+**Pluggable by design.** The row shape (`SourceTrack`) and page
+(`SearchPage` / `FacetBucket`) are the Swift twin of the backend
+`tone_forge/contracts.py` DTOs — ONE row shape every source returns.
+The page's source tabs wire only My Library now; Vinyl Crate / Jamendo /
+ccMixter / This Mac are declared coming-soon so those sources drop in
+behind the same shell without touching the view layer. Unknown source/
+status enum values decode to `.unknown` (forward-compat).
+
+**Deliberately unchanged:** `/api/history/{id}` single-entry deep fetch
+(load-bearing across kit/chopedit/borrow/deep-links) — only the LIST
+shape is superseded; per-song deep open still calls `loadSession`. The
+`scope=mine` owner gate stays server-side.
+
+**Alternatives:** keep Band Room as the in-flight destination and add a
+separate songs list (rejected — two lists is the very split this
+removes, and a completing job would live in both); render all rows
+(rejected — a large library must window, so the table is a SwiftUI
+`Table`, NSTableView-backed).
+
+**Pinned by** SongsModelTests (union merge/collapse, metadata-filter
+gating, opaque-cursor paging + dedupe, facet toggles, ingest dedupe
+hit) and the AppModelTests view-inventory assertion (`.songs` enumerated
+ahead of the retained `.bandRoom`). PARITY row `songs-page`: desktop
+`done`, web/ios `missing` (the one-pass follow-up queue).

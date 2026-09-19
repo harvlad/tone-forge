@@ -229,6 +229,26 @@ features:
         status: na
         note: "No library UI."
 
+  - id: songs-page
+    name: Unified "Songs" page — one searchable/filterable/sortable table (finished analyses ∪ in-flight jobs), pluggable sources
+    platforms:
+      web:
+        status: missing
+        note: "Being built in parallel (web+desktop one-pass). Replaces the Recent-Songs list + Band Room card stack with a full-screen table over GET /api/library/search; source tabs make the Vinyl Crate + CC catalogs droppable behind the same shell."
+      ios:
+        status: missing
+        note: "iOS Library already lists history + in-flight jobs (RootView#refreshJobs). The unified faceted table + /api/library/search source-plug is a later port once the web/desktop shape settles; the ToneForgeEngine SearchPage twin lands then."
+      desktop:
+        status: done
+        evidence: "jam-desktop/Sources/JamDesktop/Library/SongsPageView.swift#SongsPageView"
+        note: "Full-screen Songs page (.songs view) replaces the Recent-Songs sidebar list + the Band Room card stack as the library destination. Search box, source tabs (My Library wired; Vinyl Crate/Jamendo/ccMixter/This Mac declared coming-soon), facet rail (status/tempo/genre/key/mood/tags), a virtualized SwiftUI Table (title/artist/key/tempo/duration/genre/status + status-driven action: Open when done, live % when running, Retry/Dismiss on error). Rows are the server union (SongsModel over /api/library/search, sorted-before-paged with an OPAQUE cursor) with the desktop's live AnalysisQueueModel overlaid so a just-submitted upload shows instantly and a completing job COLLAPSES into its history row (SongsModel.merged, unit-tested). Band Room is now the Status column + the 'Processing (N)' chip, not a destination: 'View all songs', the toolbar analyses-in-progress button, and every Intake post-submit route to .songs. Per-song deep open (/api/history/{id}) untouched. Contract twin of tone_forge/contracts.py SourceTrack/SearchPage/FacetBucket/SourceId/TrackStatus in JamDesktopCore/Songs/SourceTrack.swift."
+      plugin:
+        status: na
+        note: "jamn Kit is a sampler/kit CONSUMER: it browses history via a transient PopupMenu to load a kit, not a full library workspace. A faceted songs table is a jam-app surface (same rationale as launchpad-pad-grid)."
+      connect:
+        status: na
+        note: "Connect is a low-latency monitoring engine with no song/library UI."
+
   - id: launchpad-mk3
     name: Novation Launchpad Pro MK3 grid (pads + LEDs)
     platforms:

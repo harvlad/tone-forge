@@ -16,6 +16,16 @@ import ToneForgeEngine
 /// (results deep-dive on past analyses).
 public enum JamView: String, CaseIterable, Sendable {
     case intake
+    // songs = the full-screen "Songs" page (searchable/filterable/sortable
+    // table). The ONE library destination: it superseded the cramped
+    // Recent-Songs sidebar list AND the Band Room card stack. In-flight
+    // analyses live here as a Status column + a "Processing (N)" filter.
+    case songs
+    // bandRoom is SUPERSEDED by `songs` and is no longer a navigation
+    // destination (removed from the view switcher; every "View all songs" /
+    // analyses-in-progress entry point now routes to `.songs`). The case +
+    // BandRoomView are kept as a fallback surface and to preserve enum
+    // ordering for older persisted state — do not re-add it to the switcher.
     case bandRoom
     case rehearsal
     // perform = the Launchpad pads (web parity: SURFACE_TO_VIEW.perform='kit').

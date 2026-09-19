@@ -11,10 +11,12 @@ final class AppModelTests: XCTestCase {
     func testViewInventoryMatchesWebApp() {
         // .guitar is its own nav item (web parity): Perform = the Launchpad
         // pads, Guitar = the fretboard/tone surface (SURFACE_TO_VIEW
-        // perform='kit', guitar='stage').
+        // perform='kit', guitar='stage'). .songs is the full-screen library
+        // table that superseded the Band Room card stack (still enumerated as
+        // a retained fallback surface, no longer a switcher destination).
         XCTAssertEqual(
             JamView.allCases,
-            [.intake, .bandRoom, .rehearsal, .perform, .guitar, .studio]
+            [.intake, .songs, .bandRoom, .rehearsal, .perform, .guitar, .studio]
         )
     }
 
