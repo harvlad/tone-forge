@@ -116,6 +116,21 @@ echo "==== crate shard {shard_i}/{N} done $(date -u) ===="
     return ["bash", "-lc", inner]
 
 
+def resolve_image(env: dict) -> str:
+    """Pick the pod image. Prefer RUNPOD_IMAGE from /opt/toneforge/.env (the
+    prod analysis image, with ffmpeg + the torch/cu126 + analysis deps already
+    BAKED IN — the bootstrap's pip install then no-ops instead of the ~20 min
+    cold install that the generic runpod/pytorch base pays on every pod). Also
+    honour it from the process env, so an operator who `export`ed it but never
+    wrote it to the file still gets the prod image. Falls back to the generic
+    base only when neither is set — that base works (the bootstrap installs the
+    deps) but is the slow path, so the fallback is a safety net, not the goal.
+    """
+    return (env.get("RUNPOD_IMAGE")
+            or os.environ.get("RUNPOD_IMAGE")
+            or IMAGE_DEFAULT)
+
+
 def create_pod(env: dict, shard_i: int) -> str | None:
     repo_url = env.get("JAMN_REPO_URL") or REPO_URL_DEFAULT
     engine = env.get("TONEFORGE_ANALYSIS_ENGINE", "current")
@@ -131,7 +146,7 @@ def create_pod(env: dict, shard_i: int) -> str | None:
     }
     body = {
         "name": f"{FLEET_PREFIX}-{shard_i}",
-        "imageName": env.get("RUNPOD_IMAGE") or IMAGE_DEFAULT,
+        "imageName": resolve_image(env),
         "containerDiskInGb": 40,
         "volumeInGb": 60,
         "volumeMountPath": "/workspace",
@@ -216,6 +231,16 @@ def main() -> int:
     for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
         if env.get(k):
             os.environ[k] = env[k]
+
+    # Log the resolved image up front — the last fleet run silently ran the
+    # generic base (paying the ~20 min install) because nobody could see which
+    # image the pods got. Make it loud so a missing RUNPOD_IMAGE is obvious.
+    image = resolve_image(env)
+    print(f"[image] pods will boot {image}"
+          + ("" if image != IMAGE_DEFAULT
+             else "  (generic base — RUNPOD_IMAGE unset; expect the slow cold "
+                  "install. Set RUNPOD_IMAGE in /opt/toneforge/.env to the prod "
+                  "analysis image to skip it.)"))
 
     created: list = []
     # 1) CREATE — with partial-failure cleanup.

@@ -33,6 +33,12 @@ class KickCharacteristics:
     saturation: float = 0.3      # Distortion/saturation amount (0-1)
     sub_presence: float = 0.5    # Sub-bass content (0-1)
     click: float = 0.3           # High-frequency click/attack (0-1)
+    # Transient rise time (start→peak of the hit). A real ms measurement, not
+    # the 0-1 ``click`` proxy: the tweak-hint path reads ``attack_ms`` directly
+    # (unified_pipeline._generate_drum_hints) and its absence was crashing the
+    # crate ingest's drum stage. Appended LAST so positional construction stays
+    # backward-compatible. Punchy electronic ~2-5 ms, acoustic ~10-20 ms.
+    attack_ms: float = 8.0
 
 
 @dataclass
@@ -304,12 +310,25 @@ def _analyze_kick(y: np.ndarray, sr: int) -> KickCharacteristics:
     high_energy = np.sum(avg_spec[high_mask]) / total_energy
     click = min(high_energy * 20, 1.0)
 
+    # Attack time: rise from each detected hit's onset to its local energy peak.
+    # Median over hits, searched within a 60 ms window so a slow decaying tail
+    # can't inflate it. Bounded to a musically sane 1-50 ms; a wash/silent clip
+    # with no clear onset falls back to the punchy default.
+    hop = 512
+    rms_env = librosa.feature.rms(y=y, hop_length=hop)[0]
+    onset_frames = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop)
+    win = max(1, int(0.06 * sr / hop))
+    rises = [int(np.argmax(rms_env[of:of + win]))
+             for of in onset_frames if rms_env[of:of + win].size]
+    attack_ms = float(np.median(rises)) * hop / sr * 1000 if rises else 8.0
+
     return KickCharacteristics(
         pitch_hz=max(40, min(100, pitch_hz)),
         decay_ms=max(100, min(600, decay_ms)),
         saturation=saturation,
         sub_presence=min(sub_energy * 5, 1.0),
         click=click,
+        attack_ms=max(1.0, min(50.0, attack_ms)),
     )
 
 

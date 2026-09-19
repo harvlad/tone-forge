@@ -456,6 +456,36 @@ def _load_ingest_cli():
     return mod
 
 
+def _load_fleet_driver():
+    """Import the fleet driver (scripts/crate_fleet.py) by path. Its only heavy
+    import (r2_storage) is lazy inside merge_and_install, so module load is safe
+    and offline."""
+    import importlib.util
+    from pathlib import Path as _P
+    script = _P(__file__).resolve().parents[1] / "scripts" / "crate_fleet.py"
+    spec = importlib.util.spec_from_file_location("crate_fleet_driver", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_fleet_resolve_image_prefers_envfile(monkeypatch):
+    # The last fleet run paid the ~20 min cold install because pods booted the
+    # generic base even though RUNPOD_IMAGE was set. resolve_image must take the
+    # .env value first, then the process env, then the generic fallback.
+    fleet = _load_fleet_driver()
+    monkeypatch.delenv("RUNPOD_IMAGE", raising=False)
+
+    # 1) .env value wins.
+    assert fleet.resolve_image({"RUNPOD_IMAGE": "prod/analysis:latest"}) == "prod/analysis:latest"
+    # 2) process env is honoured when the file omits it (exported-but-unwritten).
+    monkeypatch.setenv("RUNPOD_IMAGE", "shell/exported:1")
+    assert fleet.resolve_image({}) == "shell/exported:1"
+    # 3) neither set → the documented generic fallback (still works, just slow).
+    monkeypatch.delenv("RUNPOD_IMAGE", raising=False)
+    assert fleet.resolve_image({}) == fleet.IMAGE_DEFAULT
+
+
 def test_shard_selector_round_robin():
     cli = _load_ingest_cli()
     metas = [{"id": str(i)} for i in range(10)]

@@ -1791,26 +1791,48 @@ class UnifiedPipeline:
         return hints
 
     def _generate_drum_hints(self, desc) -> List[str]:
-        """Generate tweak hints for drum sounds."""
+        """Generate tweak hints for drum sounds.
+
+        Read defensively via getattr with the drum_analyzer field names as the
+        source of truth. The descriptor is drum_analyzer.DrumDescriptor, whose
+        Kick/Snare dataclasses do NOT carry every field this hint copy was first
+        written against (snare ``ring_ms``/``brightness`` never existed, and the
+        machine id lives on ``matched_machine``, not ``machine_style``). Reading
+        a missing attribute raised AttributeError here, which surfaced as
+        "Drums analysis failed: 'KickCharacteristics' object has no attribute
+        'attack_ms'" and dropped the whole drum stage on the crate fleet. getattr
+        with sane fallbacks keeps every hint working across descriptor shapes.
+        """
         hints = []
 
-        if hasattr(desc, "kick"):
-            if desc.kick.sub_presence > 0.7:
+        kick = getattr(desc, "kick", None)
+        if kick is not None:
+            if getattr(kick, "sub_presence", 0.0) > 0.7:
                 hints.append("Strong sub bass on the kick - use a low shelf boost around 60Hz.")
-            if desc.kick.attack_ms < 5:
+            if getattr(kick, "attack_ms", 999.0) < 5:
                 hints.append("Very punchy kick attack - try a transient shaper or fast compressor.")
 
-        if hasattr(desc, "snare"):
-            if desc.snare.ring_ms > 200:
+        snare = getattr(desc, "snare", None)
+        if snare is not None:
+            # ``ring_ms`` never existed on SnareCharacteristics — decay_ms is the
+            # real ring/tail measurement.
+            ring_ms = getattr(snare, "ring_ms", getattr(snare, "decay_ms", 0.0))
+            if ring_ms > 200:
                 hints.append("Snare has a long ring - try adding a gated reverb.")
-            if desc.snare.brightness > 0.7:
+            # No ``brightness`` on SnareCharacteristics; ``snap`` (attack crack)
+            # is the closest real proxy for a bright, crisp snare.
+            brightness = getattr(snare, "brightness", getattr(snare, "snap", 0.0))
+            if brightness > 0.7:
                 hints.append("Bright snare tone - boost around 5kHz for that crisp crack.")
 
-        if hasattr(desc, "machine_style"):
-            if desc.machine_style == "808":
-                hints.append("TR-808 character detected - long kick decay and snappy snare.")
-            elif desc.machine_style == "909":
-                hints.append("TR-909 character - punchy kick and crisp hi-hats.")
+        # DrumDescriptor exposes ``matched_machine`` ("tr808"/"tr909"/…); tolerate
+        # a plain ``machine_style`` ("808"/"909") from any alternate shape too.
+        machine = str(getattr(desc, "machine_style", "")
+                      or getattr(desc, "matched_machine", ""))
+        if "808" in machine:
+            hints.append("TR-808 character detected - long kick decay and snappy snare.")
+        elif "909" in machine:
+            hints.append("TR-909 character - punchy kick and crisp hi-hats.")
 
         return hints
 

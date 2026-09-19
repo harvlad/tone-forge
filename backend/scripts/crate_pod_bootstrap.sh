@@ -99,13 +99,23 @@ INGEST_RC=$?
 echo "==> ingest exit rc=${INGEST_RC}"
 
 # 5. Ship the crate/ shard to R2 regardless of ingest rc — a partial shard is
-#    still worth merging (per-track isolation already dropped the rejects).
-tar czf /tmp/shard.tgz -C data crate
-python - "$SHARD_I" <<'PY'
+#    still worth merging (per-track isolation already dropped the rejects). The
+#    LAST fleet run uploaded 0 shards: if every track rejected before writing a
+#    license sidecar (e.g. all downloads 403'd) data/crate never existed, `tar`
+#    errored, the tgz was never written, and the pod self-deleted empty. mkdir
+#    -p guarantees the dir exists so an EMPTY shard still tars + uploads — the
+#    merge step treats a missing shard as a warning, so an uploaded-but-empty
+#    shard is strictly better than a silent nothing (it proves the pod ran).
+mkdir -p data/crate
+if tar czf /tmp/shard.tgz -C data crate; then
+  python - "$SHARD_I" <<'PY'
 import sys
 from tone_forge import r2_storage as r2
 i = sys.argv[1]
 r2._client().upload_file("/tmp/shard.tgz", r2.bucket_name(), f"crate-shards/shard-{i}.tgz")
 print(f"shard {i} uploaded to R2")
 PY
+else
+  echo "WARN: tar of data/crate failed — no shard uploaded for ${SHARD_I}"
+fi
 echo "==== crate shard ${SHARD_I}/${N} done $(date -u) ===="

@@ -229,6 +229,20 @@ class TestAnalyzeKick:
         result = _analyze_kick(kick, SR)
         assert 0 <= result.saturation <= 1
 
+    def test_kick_attack_ms_in_bounds(self):
+        # attack_ms is a real transient measurement bounded to a musical 1-50 ms
+        # (its absence was the field that crashed the crate ingest drum stage).
+        kick = _make_kick_sound()
+        result = _analyze_kick(kick, SR)
+        assert 1.0 <= result.attack_ms <= 50.0
+
+    def test_kick_default_has_attack_ms(self):
+        # Backward-compatible: positional 3-arg construction still works and the
+        # new field carries its default rather than requiring every call site to
+        # pass it.
+        assert KickCharacteristics().attack_ms == 8.0
+        assert KickCharacteristics(60, 200, 0.3).attack_ms == 8.0
+
 
 class TestAnalyzeSnare:
     """Test snare analysis."""
@@ -335,6 +349,49 @@ class TestMatchDrumMachine:
         # Result depends on whether drum_machines.json exists
         if result:
             assert "id" in result or "display" in result or "machine" in result
+
+
+class TestPipelineDrumHints:
+    """Regression: the unified_pipeline tweak-hint consumer must survive a REAL
+    DrumDescriptor. It read fields that never existed on the drum_analyzer
+    dataclasses (kick.attack_ms, snare.ring_ms, snare.brightness, machine_style)
+    and raised AttributeError — surfaced as 'Drums analysis failed: ...
+    KickCharacteristics ... no attribute attack_ms' and dropped the whole drum
+    stage on the crate fleet run."""
+
+    def _hints(self, desc):
+        # _generate_drum_hints only reads its ``desc`` arg (never ``self``), so
+        # call it unbound to avoid constructing the full pipeline.
+        from tone_forge.unified_pipeline import UnifiedPipeline
+        return UnifiedPipeline._generate_drum_hints(None, desc)
+
+    def test_default_descriptor_does_not_crash(self):
+        # This exact call raised AttributeError before the fix.
+        hints = self._hints(DrumDescriptor())
+        assert isinstance(hints, list)
+
+    def test_analyzed_descriptor_does_not_crash(self, tmp_path):
+        loop = _make_drum_loop()
+        fp = tmp_path / "drums.wav"
+        sf.write(str(fp), loop, SR)
+        hints = self._hints(analyze_drums(str(fp)))
+        assert isinstance(hints, list)
+
+    def test_punchy_808_descriptor_emits_expected_hints(self):
+        desc = DrumDescriptor(
+            kick=KickCharacteristics(pitch_hz=55, decay_ms=400, saturation=0.2,
+                                     sub_presence=0.9, click=0.5, attack_ms=3.0),
+            snare=SnareCharacteristics(pitch_hz=180, noise=0.7, snap=0.8,
+                                       decay_ms=250, body=0.6),
+            matched_machine="tr808",
+        )
+        hints = self._hints(desc)
+        joined = " ".join(hints).lower()
+        assert "sub bass" in joined          # kick.sub_presence > 0.7
+        assert "punchy kick" in joined        # kick.attack_ms < 5
+        assert "long ring" in joined          # snare.decay_ms (ring proxy) > 200
+        assert "bright snare" in joined       # snare.snap (brightness proxy) > 0.7
+        assert "808" in joined                # matched_machine → machine hint
 
 
 if __name__ == "__main__":
