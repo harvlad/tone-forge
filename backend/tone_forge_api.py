@@ -5408,27 +5408,35 @@ async def _library_scoped_history(request: Request, scope: Optional[str]) -> lis
                 return demo
         return None
 
+    device_id = (request.headers.get("x-device-id") or "").strip()
     user = await current_user(request)
+
+    if _shared_library_enabled():
+        # TESTING PHASE ONLY (TONEFORGE_SHARED_LIBRARY=1): cross-show the
+        # WHOLE library to ANY caller — signed-in OR not — so a tester on
+        # a fresh/unsigned client (e.g. the desktop app with no account)
+        # still sees songs they know instead of an empty Songs page. Own
+        # songs first when we can identify the caller. Reads only — the
+        # owner gate still governs delete. Checked BEFORE the sign-in gate
+        # so scope=mine (what the Songs page always sends) doesn't 401 an
+        # unsigned tester. MUST be unset before public launch (copyright).
+        if user is not None:
+            def _is_mine(entry: dict) -> bool:
+                return (entry.get("owner_id") == user.id
+                        or bool(device_id and entry.get("device_id") == device_id))
+            return (
+                [e for e in history if _is_mine(e)]
+                + [e for e in history if not _is_mine(e)]
+            )
+        return history
+
+    # LAUNCH PATH (flag off): scope=mine requires sign-in and returns only
+    # the caller's own analyses — the security-critical owner gate.
     if user is None:
         demo = _demo_entry()
         if demo is None:
             raise HTTPException(status_code=401, detail="Sign in required")
         return [demo]
-
-    device_id = (request.headers.get("x-device-id") or "").strip()
-    if _shared_library_enabled():
-        # TESTING PHASE ONLY (TONEFORGE_SHARED_LIBRARY=1): signed-in
-        # accounts see the whole library, own songs first. Reads only —
-        # the owner gate below still governs delete. MUST be unset before
-        # public launch (copyright).
-        def _is_mine(entry: dict) -> bool:
-            return (entry.get("owner_id") == user.id
-                    or bool(device_id and entry.get("device_id") == device_id))
-
-        return (
-            [e for e in history if _is_mine(e)]
-            + [e for e in history if not _is_mine(e)]
-        )
 
     mine = [
         entry for entry in history

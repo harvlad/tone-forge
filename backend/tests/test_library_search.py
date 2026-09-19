@@ -437,6 +437,22 @@ class TestEndpointScopeMine:
         titles = {t["title"] for t in resp.json()["tracks"]}
         assert titles == {"mine-song", "other-song"}
 
+    def test_shared_library_cross_shows_to_unsigned_tester(self, client, monkeypatch):
+        # Regression: the Songs page always sends scope=mine, and an
+        # UNSIGNED tester (the desktop app with no account) must still see
+        # the shared library during the testing phase — not a 401 / empty
+        # "No songs yet". OFF -> 401 (launch owner gate); ON -> full library.
+        api._add_to_history({"name": "song-a"}, owner_id="someone")
+        api._add_to_history({"name": "song-b"}, owner_id="another")
+
+        monkeypatch.delenv("TONEFORGE_SHARED_LIBRARY", raising=False)
+        assert client.get("/api/library/search?scope=mine").status_code == 401
+
+        monkeypatch.setenv("TONEFORGE_SHARED_LIBRARY", "1")
+        resp = client.get("/api/library/search?scope=mine")
+        assert resp.status_code == 200
+        assert {t["title"] for t in resp.json()["tracks"]} == {"song-a", "song-b"}
+
 
 class TestEndpointUnion:
     def test_done_job_collapses_through_endpoint(self, client):
