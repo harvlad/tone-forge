@@ -212,7 +212,7 @@ public final class ImportCoordinator: ObservableObject {
             // is owned by JobCompletionCenter: even if this sheet closes,
             // the phone locks, or the app is killed, the background poll
             // finishes it and notifies.
-            let jobId = try await jobClient.submit(
+            let submission = try await jobClient.submit(
                 baseURL: baseURL, wavFileURL: tempWAV, filename: filename,
                 extraFields: attribution,
                 onUploadProgress: { fraction in
@@ -226,6 +226,20 @@ public final class ImportCoordinator: ObservableObject {
                 }
             )
             try Task.checkCancellation()
+            // Content-hash dedupe against a COMPLETED analysis: no job
+            // runs (jobId == nil) and the backend hands back the existing
+            // history id. Open that song straight away instead of
+            // following a null job into a dead card (parity with jam.js
+            // and the desktop queue). An in-flight dedupe still carries a
+            // real jobId (history id nil) and falls through to be followed.
+            if submission.duplicate, submission.jobId == nil,
+               let historyId = submission.historyId {
+                await loadFinishedBundle(historyId: historyId, appState: appState)
+                return
+            }
+            guard let jobId = submission.jobId else {
+                throw JobClientError.missingJobId
+            }
             // The job exists server-side now: the upload is captured
             // and will never need re-sending, even if this sheet
             // closes or the app dies. Flip to the analysing phase so
@@ -288,6 +302,15 @@ public final class ImportCoordinator: ObservableObject {
         // Foreground won the race. Claim completion so the background
         // path won't double-fire, then load the bundle in-place.
         JobCompletionCenter.shared.foregroundCompleted(jobId: jobId)
+        await loadFinishedBundle(historyId: historyId, appState: appState)
+    }
+
+    /// Load a finished analysis bundle in place and settle the sheet to
+    /// `.done`. Shared by the normal foreground-completion tail and the
+    /// dedupe shortcut (an identical upload the backend already analyzed
+    /// returns the existing history id and no job, so there is no job to
+    /// register or follow — just open the song).
+    private func loadFinishedBundle(historyId: String, appState: AppState) async {
         phase = .loading
         await appState.loadBundle(analysisId: historyId)
         if let loadError = appState.loadingError {

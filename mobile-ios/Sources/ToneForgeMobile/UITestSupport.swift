@@ -109,8 +109,8 @@ struct StubJobClient: JobSubmitting {
         baseURL: URL, wavFileURL: URL, filename: String,
         extraFields: [(name: String, value: String)],
         onUploadProgress: (@Sendable (Double) -> Void)?
-    ) async throws -> String {
-        "uitest-stub-job"
+    ) async throws -> JobSubmission {
+        JobSubmission(jobId: "uitest-stub-job")
     }
 
     func events(

@@ -200,16 +200,28 @@ public final class AnalysisQueueModel: ObservableObject {
             return
         }
         enqueueJob(kind: .upload, title: filename, baseURL: baseURL) { [uploadClient] in
-            try await uploadClient.submitUpload(
+            let start = try await uploadClient.submitUpload(
                 baseURL: baseURL, fileURL: fileURL, filename: filename
-            ).jobId
+            )
+            // Content-hash dedupe: the backend already has a finished
+            // analysis of these exact bytes and returned its history id
+            // with no job. Land the row straight in `.done` (Open action)
+            // instead of following a null job into a dead card. An
+            // in-flight dedupe still carries a real job id → follow it.
+            if start.duplicate, let historyId = start.historyId, start.jobId == nil {
+                return .existing(historyId: historyId)
+            }
+            guard let jobId = start.jobId else {
+                throw JobClientError.missingJobId
+            }
+            return .job(jobId)
         }
     }
 
     /// Curated CC demo track: server-side download → job.
     public func enqueueDemoImport(baseURL: URL, trackId: String, title: String) {
         enqueueJob(kind: .demo, title: title, baseURL: baseURL) { [ccClient] in
-            try await ccClient.startImport(baseURL: baseURL, trackId: trackId)
+            .job(try await ccClient.startImport(baseURL: baseURL, trackId: trackId))
         }
     }
 
@@ -293,11 +305,22 @@ public final class AnalysisQueueModel: ObservableObject {
 
     // MARK: - Internals
 
+    /// Result of submitting a server job. Either a fresh job id to
+    /// follow, or a dedupe hit — the backend already has a finished
+    /// analysis of these exact bytes and handed back its history id, so
+    /// the row lands straight in `.done` (Open action) instead of
+    /// following a null job into a dead card. Parity with jam.js.
+    enum JobSubmitOutcome: Sendable {
+        case job(String)
+        case existing(historyId: String)
+    }
+
     /// Shared server-job path: create a queued row, submit off-row,
-    /// then follow the job's event stream.
+    /// then follow the job's event stream (or settle immediately on a
+    /// dedupe hit).
     private func enqueueJob(
         kind: JobSourceKind, title: String, baseURL: URL,
-        submit: @escaping @Sendable () async throws -> String
+        submit: @escaping @Sendable () async throws -> JobSubmitOutcome
     ) {
         let item = AnalysisQueueItem(
             id: UUID().uuidString, jobId: nil, title: title, kind: kind,
@@ -308,12 +331,20 @@ public final class AnalysisQueueModel: ObservableObject {
         watchers[itemId] = Task { [weak self] in
             defer { self?.watchers[itemId] = nil }
             do {
-                let jobId = try await submit()
+                let outcome = try await submit()
                 guard !Task.isCancelled, let self else { return }
-                if let index = self.items.firstIndex(where: { $0.id == itemId }) {
-                    self.items[index].jobId = jobId
+                switch outcome {
+                case let .existing(historyId):
+                    // Already analyzed — no job runs. Flip the queued row
+                    // to done so the user gets Open (setStatus fires
+                    // onJobCompleted, refreshing the history list).
+                    self.setStatus(itemId: itemId, .done(historyId: historyId))
+                case let .job(jobId):
+                    if let index = self.items.firstIndex(where: { $0.id == itemId }) {
+                        self.items[index].jobId = jobId
+                    }
+                    await self.followJob(itemId: itemId, baseURL: baseURL, jobId: jobId)
                 }
-                await self.followJob(itemId: itemId, baseURL: baseURL, jobId: jobId)
             } catch is CancellationError {
                 // dismissed
             } catch {

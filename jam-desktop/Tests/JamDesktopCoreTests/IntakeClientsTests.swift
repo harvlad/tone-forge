@@ -66,6 +66,20 @@ final class IntakeClientsTests: XCTestCase {
         let json = #"{"job_id":"job-7","engine_online":true}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(UploadStart.self, from: json)
         XCTAssertEqual(decoded, UploadStart(jobId: "job-7", engineOnline: true))
+        // Legacy shape has no dedupe fields.
+        XCTAssertFalse(decoded.duplicate)
+        XCTAssertNil(decoded.historyId)
+    }
+
+    func testUploadStartDecodesContentHashDuplicate() throws {
+        // analyze-upload dedupe against a finished analysis: null job,
+        // existing history id — the queue opens it instead of enqueuing.
+        let json = #"{"job_id":null,"history_id":"hist-42","duplicate":true,"engine_online":true}"#
+            .data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(UploadStart.self, from: json)
+        XCTAssertNil(decoded.jobId)
+        XCTAssertTrue(decoded.duplicate)
+        XCTAssertEqual(decoded.historyId, "hist-42")
     }
 
     func testEngineStatusDecodes() throws {

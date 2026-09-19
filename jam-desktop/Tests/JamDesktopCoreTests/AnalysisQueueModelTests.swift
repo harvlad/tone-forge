@@ -71,9 +71,9 @@ private final class ScriptedJobs: JobSubmitting, @unchecked Sendable {
         baseURL: URL, wavFileURL: URL, filename: String,
         extraFields: [(name: String, value: String)],
         onUploadProgress: (@Sendable (Double) -> Void)?
-    ) async throws -> String {
+    ) async throws -> JobSubmission {
         XCTFail("submit should not be called by the desktop queue")
-        return "unused"
+        return JobSubmission(jobId: "unused")
     }
 
     func events(baseURL: URL, jobId: String) -> AsyncThrowingStream<AnalyzeEvent, Error> {
@@ -215,6 +215,26 @@ final class AnalysisQueueModelTests: XCTestCase {
         queue.enqueueUpload(baseURL: base, fileURL: wav, filename: "x.wav", attested: true)
         await queue.awaitAll()
         XCTAssertEqual(queue.items[0].status, .error("upload exploded"))
+    }
+
+    /// Content-hash dedupe: analyze-upload returns no job + the existing
+    /// history id. The row must open that song (land in `.done`) rather
+    /// than follow a null job into a dead card — and no job stream is
+    /// touched (ScriptedJobs([]) would 404 into an error if it were).
+    func testUploadDuplicateOpensExistingSongWithoutJob() async {
+        var completedFired = false
+        let queue = makeQueue(
+            upload: StubUpload(result: UploadStart(
+                jobId: nil, engineOnline: true,
+                duplicate: true, historyId: "hist-dupe")),
+            jobs: ScriptedJobs([])
+        )
+        queue.onJobCompleted = { completedFired = true }
+        queue.enqueueUpload(baseURL: base, fileURL: wav, filename: "x.wav", attested: true)
+        await queue.awaitAll()
+        XCTAssertEqual(queue.items[0].status, .done(historyId: "hist-dupe"))
+        XCTAssertNil(queue.items[0].jobId)  // no job was ever created
+        XCTAssertTrue(completedFired)       // history list gets refreshed
     }
 
     // MARK: Demo flow
