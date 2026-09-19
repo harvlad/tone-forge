@@ -56,18 +56,45 @@ public struct EngineStatusClient: EngineStatusFetching {
 
 /// Response of POST /api/analyze-upload and
 /// POST /api/cc-tracks/{id}/import.
+///
+/// `jobId` is optional because the analyze-upload content-hash dedupe
+/// can return NO job: an identical file already fully analyzed comes
+/// back as `{"job_id": null, "history_id": "…", "duplicate": true}`.
+/// The queue must open that existing song rather than follow a null job
+/// into a dead card (parity with jam.js). A dedupe against an in-flight
+/// job still returns a real `jobId` and is followed transparently.
 public struct UploadStart: Codable, Sendable, Equatable {
-    public let jobId: String
+    public let jobId: String?
     public let engineOnline: Bool
+    public let duplicate: Bool
+    public let historyId: String?
 
     enum CodingKeys: String, CodingKey {
         case jobId = "job_id"
         case engineOnline = "engine_online"
+        case duplicate
+        case historyId = "history_id"
     }
 
-    public init(jobId: String, engineOnline: Bool) {
+    public init(
+        jobId: String?, engineOnline: Bool,
+        duplicate: Bool = false, historyId: String? = nil
+    ) {
         self.jobId = jobId
         self.engineOnline = engineOnline
+        self.duplicate = duplicate
+        self.historyId = historyId
+    }
+
+    // Custom decode so the new fields are backward-compatible: legacy
+    // responses omit `duplicate`/`history_id` (→ false / nil) and always
+    // carry a `job_id`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        jobId = try c.decodeIfPresent(String.self, forKey: .jobId)
+        engineOnline = try c.decodeIfPresent(Bool.self, forKey: .engineOnline) ?? false
+        duplicate = try c.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
+        historyId = try c.decodeIfPresent(String.self, forKey: .historyId)
     }
 }
 

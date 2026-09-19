@@ -40,20 +40,39 @@ public enum JobClientError: Error, LocalizedError, Equatable {
     }
 }
 
+/// Outcome of POST /api/analyze-upload. Normally a fresh `jobId` to
+/// follow. When the backend recognizes these exact bytes as an
+/// already-finished analysis (content-hash dedupe), it returns no job
+/// and hands back the existing `historyId` with `duplicate == true`;
+/// the caller must OPEN that song rather than follow a null job into a
+/// dead Band Room card. Parity with jam.js's duplicate handling.
+public struct JobSubmission: Sendable, Equatable {
+    public let jobId: String?
+    public let duplicate: Bool
+    public let historyId: String?
+
+    public init(jobId: String?, duplicate: Bool = false, historyId: String? = nil) {
+        self.jobId = jobId
+        self.duplicate = duplicate
+        self.historyId = historyId
+    }
+}
+
 /// Transport seam over the job API for test stubbing.
 public protocol JobSubmitting: Sendable {
-    /// Upload the WAV, create a job, return its id. `extraFields` are
-    /// appended to the multipart form after the default analysis
-    /// fields — used for attribution metadata (D-024: title/artist),
-    /// since the on-device transcode strips file tags before upload.
-    /// `onUploadProgress` receives the fraction of request bytes sent
-    /// (0…1) so the UI can show a REAL upload bar — stubs may ignore
-    /// it.
+    /// Upload the WAV and create a job, returning either the new job to
+    /// follow or a dedupe hit pointing at an existing analysis (see
+    /// `JobSubmission`). `extraFields` are appended to the multipart
+    /// form after the default analysis fields — used for attribution
+    /// metadata (D-024: title/artist), since the on-device transcode
+    /// strips file tags before upload. `onUploadProgress` receives the
+    /// fraction of request bytes sent (0…1) so the UI can show a REAL
+    /// upload bar — stubs may ignore it.
     func submit(
         baseURL: URL, wavFileURL: URL, filename: String,
         extraFields: [(name: String, value: String)],
         onUploadProgress: (@Sendable (Double) -> Void)?
-    ) async throws -> String
+    ) async throws -> JobSubmission
     /// Stream live progress for a job; finishes after a single
     /// `.completed(historyId:)`. Throws on a server-reported error.
     func events(baseURL: URL, jobId: String) -> AsyncThrowingStream<AnalyzeEvent, Error>
@@ -61,7 +80,7 @@ public protocol JobSubmitting: Sendable {
 
 public extension JobSubmitting {
     /// Convenience overloads — protocols can't carry default arguments.
-    func submit(baseURL: URL, wavFileURL: URL, filename: String) async throws -> String {
+    func submit(baseURL: URL, wavFileURL: URL, filename: String) async throws -> JobSubmission {
         try await submit(
             baseURL: baseURL, wavFileURL: wavFileURL,
             filename: filename, extraFields: [], onUploadProgress: nil
@@ -71,7 +90,7 @@ public extension JobSubmitting {
     func submit(
         baseURL: URL, wavFileURL: URL, filename: String,
         extraFields: [(name: String, value: String)]
-    ) async throws -> String {
+    ) async throws -> JobSubmission {
         try await submit(
             baseURL: baseURL, wavFileURL: wavFileURL,
             filename: filename, extraFields: extraFields,
@@ -95,7 +114,7 @@ public struct BackendJobClient: JobSubmitting {
         baseURL: URL, wavFileURL: URL, filename: String,
         extraFields: [(name: String, value: String)],
         onUploadProgress: (@Sendable (Double) -> Void)?
-    ) async throws -> String {
+    ) async throws -> JobSubmission {
         let boundary = "toneforge-\(UUID().uuidString)"
         // Engine-job path (/api/analyze-upload), NOT the legacy
         // /api/analyze-job: the production backend has no GPU — jobs
@@ -137,14 +156,41 @@ public struct BackendJobClient: JobSubmitting {
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw JobClientError.badStatus(http.statusCode)
         }
-        guard
-            let object = try? JSONSerialization.jsonObject(with: data),
-            let dict = object as? [String: Any],
-            let jobId = dict["job_id"] as? String, !jobId.isEmpty
-        else {
+        guard let submission = Self.parseSubmitResponse(data) else {
             throw JobClientError.missingJobId
         }
-        return jobId
+        return submission
+    }
+
+    /// Decode the /api/analyze-upload response body. Returns nil when the
+    /// server sent neither a job id nor a dedupe hit (contract violation
+    /// → `.missingJobId`). Pure + static so it is unit-testable without a
+    /// network round-trip.
+    ///
+    /// Backward-compatible: legacy responses carry only `job_id` and
+    /// decode as a normal `.job`. A dedupe response carries
+    /// `duplicate: true` + `history_id` and (for the completed case) a
+    /// null `job_id`; it is surfaced so the caller opens the existing
+    /// song instead of following a null job.
+    public static func parseSubmitResponse(_ data: Data) -> JobSubmission? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dict = object as? [String: Any]
+        else {
+            return nil
+        }
+        let jobId = (dict["job_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let duplicate = (dict["duplicate"] as? Bool) ?? false
+        let historyId = (dict["history_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // Dedupe against a completed analysis: no job runs, open the
+        // existing history row.
+        if duplicate, jobId == nil, let historyId {
+            return JobSubmission(jobId: nil, duplicate: true, historyId: historyId)
+        }
+        // Everything else (fresh job, or the in-flight dedupe that still
+        // hands back a real job to follow) needs a job id.
+        guard let jobId else { return nil }
+        return JobSubmission(jobId: jobId, duplicate: duplicate, historyId: historyId)
     }
 
     public func events(
