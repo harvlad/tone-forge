@@ -168,43 +168,32 @@ struct SidebarView: View {
 // MARK: - Sidebar Logo
 
 private struct SidebarLogo: View {
-    private let bars: [CGFloat] = [0.5, 0.8, 1.0, 0.7, 0.5]
+    // The Jamn brand mark: a 5-bar waveform, a faithful port of the web
+    // header's inline SVG (jam.html .brand-mark). Bar heights are the web
+    // rects normalized to the 20-unit viewBox (6,14,20,12,6 → these), and
+    // the gradient is the same #a855f7 → #6366f1 run on the SVG's
+    // top-left→bottom-right diagonal. Drawn (not a binary asset) exactly
+    // like the web mark, so the two brands stay pixel-consistent — this is
+    // the distinct Jamn logo, not the app icon.
+    private let bars: [CGFloat] = [0.30, 0.70, 1.00, 0.60, 0.30]
 
     var body: some View {
-        // Prefer the real bundled app icon (AppIcon.icns, surfaced via
-        // NSApp.applicationIconImage) so the sidebar wordmark carries the
-        // actual Jamn logo next to it, not just the abstract mark. Falls
-        // back to the drawn gradient bars when the icon image isn't
-        // available (SwiftUI previews / a headless run before the icon is
-        // set) so the header never renders empty.
-        if let icon = NSApplication.shared.applicationIconImage {
-            Image(nsImage: icon)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        } else {
-            drawnMark
-        }
-    }
-
-    private var drawnMark: some View {
         GeometryReader { geo in
             let h = geo.size.height
             let barWidth = geo.size.width * 0.12
-            let spacing = geo.size.width * 0.06
+            let spacing = geo.size.width * 0.055
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(bars.indices, id: \.self) { i in
                     Capsule()
-                        .frame(width: barWidth, height: h * bars[i])
+                        .frame(width: barWidth, height: max(barWidth, h * bars[i]))
                 }
             }
             .frame(width: geo.size.width, height: h, alignment: .center)
             .foregroundStyle(
                 LinearGradient(
                     colors: [Color(hex: 0xA855F7), Color(hex: 0x6366F1)],
-                    startPoint: .top,
-                    endPoint: .bottom
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
             )
         }
