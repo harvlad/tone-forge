@@ -475,6 +475,7 @@ def test_fleet_resolve_image_prefers_envfile(monkeypatch):
     # .env value first, then the process env, then the generic fallback.
     fleet = _load_fleet_driver()
     monkeypatch.delenv("RUNPOD_IMAGE", raising=False)
+    monkeypatch.delenv("CRATE_RUNPOD_IMAGE", raising=False)
 
     # 1) .env value wins.
     assert fleet.resolve_image({"RUNPOD_IMAGE": "prod/analysis:latest"}) == "prod/analysis:latest"
@@ -484,6 +485,23 @@ def test_fleet_resolve_image_prefers_envfile(monkeypatch):
     # 3) neither set → the documented generic fallback (still works, just slow).
     monkeypatch.delenv("RUNPOD_IMAGE", raising=False)
     assert fleet.resolve_image({}) == fleet.IMAGE_DEFAULT
+
+
+def test_fleet_crate_image_override_beats_global_runpod_image(monkeypatch):
+    # CRATE_RUNPOD_IMAGE is a crate-SCOPED override so the fleet can run on the
+    # baked worker image without touching the global RUNPOD_IMAGE that the prod
+    # analysis autoscaler also reads. It must win over RUNPOD_IMAGE from both
+    # the process env and the .env dict.
+    fleet = _load_fleet_driver()
+    monkeypatch.setenv("CRATE_RUNPOD_IMAGE", "ghcr.io/harvlad/tone-forge-worker:latest")
+    monkeypatch.setenv("RUNPOD_IMAGE", "shell/exported:1")
+    assert (fleet.resolve_image({"RUNPOD_IMAGE": "prod/analysis:latest"})
+            == "ghcr.io/harvlad/tone-forge-worker:latest")
+    # .env-level CRATE_RUNPOD_IMAGE also wins over a global RUNPOD_IMAGE.
+    monkeypatch.delenv("CRATE_RUNPOD_IMAGE", raising=False)
+    assert (fleet.resolve_image({"CRATE_RUNPOD_IMAGE": "crate/baked:1",
+                                 "RUNPOD_IMAGE": "prod/analysis:latest"})
+            == "crate/baked:1")
 
 
 def test_shard_selector_round_robin():

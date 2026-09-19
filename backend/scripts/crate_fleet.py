@@ -123,16 +123,23 @@ echo "==== crate shard {shard_i}/{N} done $(date -u) ===="
 
 
 def resolve_image(env: dict) -> str:
-    """Pick the pod image. Prefer RUNPOD_IMAGE from /opt/toneforge/.env (the
-    prod analysis image, with ffmpeg + the torch/cu126 + analysis deps already
-    BAKED IN — the bootstrap's pip install then no-ops instead of the ~20 min
-    cold install that the generic runpod/pytorch base pays on every pod). Also
-    honour it from the process env, so an operator who `export`ed it but never
-    wrote it to the file still gets the prod image. Falls back to the generic
-    base only when neither is set — that base works (the bootstrap installs the
-    deps) but is the slow path, so the fallback is a safety net, not the goal.
+    """Pick the pod image.
+
+    Precedence, highest first:
+      1. CRATE_RUNPOD_IMAGE (process or .env) — a CRATE-SCOPED override so the
+         fleet can run on the baked prod worker image
+         (ghcr.io/harvlad/tone-forge-worker, public, matched CUDA 12.6 / cuDNN 9
+         → basic_pitch on GPU with NO CUDA-EP init hang) WITHOUT touching the
+         global RUNPOD_IMAGE the prod analysis autoscaler also reads.
+      2. RUNPOD_IMAGE (.env then process) — the shared image knob.
+      3. IMAGE_DEFAULT — the generic runpod/pytorch base. Works (the bootstrap
+         installs the deps) but pip-installs onnxruntime-gpu against an
+         unverified cuDNN, the mismatch that can HANG basic_pitch. Safety net,
+         not the goal; the per-stage timeout + onnx fail-fast cover it.
     """
-    return (env.get("RUNPOD_IMAGE")
+    return (os.environ.get("CRATE_RUNPOD_IMAGE")
+            or env.get("CRATE_RUNPOD_IMAGE")
+            or env.get("RUNPOD_IMAGE")
             or os.environ.get("RUNPOD_IMAGE")
             or IMAGE_DEFAULT)
 
