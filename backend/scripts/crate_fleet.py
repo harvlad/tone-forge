@@ -44,7 +44,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # --- knobs (top-of-file constants) -----------------------------------------
-N = 8                                   # number of GPU pods / shards
+# N sizes the SHARDING (tracks split into N groups); PODS is how many pods to
+# actually create. They differ ONLY for a canary: CRATE_FLEET_N=8
+# CRATE_FLEET_PODS=1 runs one pod over shard 0 (≈40/8 tracks) to measure real
+# per-track time + prove the GPU ensemble path before the full fan-out. Default
+# PODS==N is the normal full run. Env-driven so a canary needs no code edit.
+N = int(os.environ.get("CRATE_FLEET_N") or 8)      # number of shards
+PODS = int(os.environ.get("CRATE_FLEET_PODS") or N)  # pods to actually create
 GPU_TYPE = "NVIDIA A40"                 # 48GB — the value pick for demucs
 BRANCH = "main"                         # pods clone this ref
 FLEET_PREFIX = "jamn-crate-seed"        # pod name prefix (teardown scans on it)
@@ -245,7 +251,7 @@ def main() -> int:
     created: list = []
     # 1) CREATE — with partial-failure cleanup.
     try:
-        for i in range(N):
+        for i in range(PODS):
             pid = create_pod(env, i)
             if not pid:
                 raise RuntimeError(f"pod create returned no id for shard {i}")
@@ -259,7 +265,7 @@ def main() -> int:
         return 2
 
     # 2) WAIT — pods self-terminate on completion.
-    print(f"waiting up to {POLL_DEADLINE_SEC//60} min for {N} pods to finish...")
+    print(f"waiting up to {POLL_DEADLINE_SEC//60} min for {len(created)} pod(s) to finish...")
     deadline = time.time() + POLL_DEADLINE_SEC
     try:
         while time.time() < deadline:
