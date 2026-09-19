@@ -6,21 +6,35 @@
 // clock produces.
 //
 // Design:
-//   - Backed by `AVAudioTime` sampled from the engine's outputNode.
-//     This is the same clock the driver samples the DAC with, so
-//     anything scheduled at `AVAudioTime` boundaries is sample-accurate.
-//   - Exposes a "song time" (seconds since play() was called) derived
-//     by subtracting the anchor host time from `now()`. Song time is
-//     what UI + engine logic consume; AVAudioTime is only used at the
-//     boundary where audio nodes are scheduled.
-//   - Supports pause + seek by mutating the anchor + accumulated
-//     offset. Playback stays at Double-precision seconds internally
-//     because the LP layer + chord advancer don't need sample-frame
-//     accuracy.
+//   - Song time is slaved to the AUDIO RENDER CLOCK. When the engine is
+//     rendering, `nowSongSeconds` derives elapsed seconds from the output
+//     node's SAMPLE time (`outputNode.lastRenderTime.sampleTime`), which
+//     advances at the true DAC rate. The AudioEngine wires that source in
+//     via `attachRenderClock`. This is the whole point: the audio crystal
+//     and the CPU's wall clock drift apart, so a wall clock (what this
+//     used to be — a bare `mach_absolute_time`) makes the chord highlight
+//     slide against the audio over a multi-minute song. Sample time can't.
+//   - Before the engine has rendered (cold boot, headless XCTest with no
+//     engine, or the pre-roll window before the first render callback),
+//     the clock falls back to the injected `hostTimeProvider` wall clock,
+//     then LAZILY adopts the sample anchor the first time a valid render
+//     sample appears — folding the wall-clock elapsed so far into the
+//     accumulated offset so song time is continuous across the handoff.
+//   - `audibleSongSeconds` additionally subtracts `AVAudioSession
+//     .outputLatency`: `nowSongSeconds` reports the sample being RENDERED,
+//     but the DAC won't sound it until `outputLatency` later, so the chord
+//     ribbon keys off the audible value to avoid LEADING the audio (badly
+//     on Bluetooth). Scheduling (stems / metronome / quantize) keeps using
+//     `nowSongSeconds` — those emit their own audio through the same output
+//     path, so latency-shifting them would double-compensate.
+//   - Supports pause + seek by mutating the anchor + accumulated offset.
+//     Playback stays at Double-precision seconds internally because the LP
+//     layer + chord advancer don't need sample-frame accuracy.
 //
 // The clock does NOT own the AVAudioEngine — it's a value-object-like
 // helper the AudioEngine wraps. Under macOS + XCTest we swap the
-// `hostTimeProvider` closure for a manual driver so tests are hermetic.
+// `hostTimeProvider` closure for a manual driver (and attach no render
+// clock) so tests are hermetic.
 
 import Foundation
 #if canImport(AVFoundation)
@@ -62,6 +76,35 @@ public final class TransportClock: @unchecked Sendable {
     /// `_rate` × wall-clock. 1.0 = normal.
     private var _rate: Double = 1.0
 
+    /// Audio render-sample anchor for the current playing segment, or nil
+    /// when the engine wasn't rendering at segment start (still on the
+    /// wall-clock fallback until a valid sample is adopted).
+    private var _anchorRenderSample: RenderSample?
+
+    /// Output-node render-time source. Returns the current sample time +
+    /// its sample rate while the engine is rendering, else nil. Not
+    /// `@Sendable`-typed because the enclosing class is `@unchecked
+    /// Sendable` and this closure captures the (non-Sendable)
+    /// AVAudioEngine; `AVAudioNode.lastRenderTime` is documented safe to
+    /// read from any thread, and every call sits under `lock`.
+    private var _renderSampleProvider: (() -> RenderSample?)?
+
+    /// Hardware output latency (seconds) source — AVAudioSession
+    /// .outputLatency, injected by the AudioEngine. Subtracted by
+    /// `audibleSongSeconds`.
+    private var _outputLatencyProvider: (() -> Double)?
+
+    /// A reading of the output node's render position: the monotonic
+    /// output SAMPLE index and the rate it advances at.
+    public struct RenderSample: Sendable {
+        public let sampleTime: Int64
+        public let sampleRate: Double
+        public init(sampleTime: Int64, sampleRate: Double) {
+            self.sampleTime = sampleTime
+            self.sampleRate = sampleRate
+        }
+    }
+
     public init(
         hostTimeProvider: (@Sendable () -> UInt64)? = nil
     ) {
@@ -86,10 +129,41 @@ public final class TransportClock: @unchecked Sendable {
 
     /// Current song-time in seconds. Advances monotonically while
     /// playing; frozen when paused; zero when stopped. Safe to call
-    /// from any thread.
+    /// from any thread. This is the SCHEDULING authority — the sample
+    /// the engine is rendering. UI that must match what the listener
+    /// HEARS should use `audibleSongSeconds`.
     public var nowSongSeconds: Double {
         lock.lock(); defer { lock.unlock() }
         return _nowSongSecondsLocked()
+    }
+
+    /// Song-time as the LISTENER hears it: the rendered position minus
+    /// the hardware output latency (DAC + buffer + Bluetooth codec). The
+    /// chord ribbon keys off this so the highlight tracks the audible
+    /// chord instead of leading it by the output latency. Equal to
+    /// `nowSongSeconds` when not playing or when no latency source is
+    /// attached (headless tests).
+    public var audibleSongSeconds: Double {
+        lock.lock(); defer { lock.unlock() }
+        let now = _nowSongSecondsLocked()
+        guard _state == .playing, let latency = _outputLatencyProvider?() else {
+            return now
+        }
+        return now - latency
+    }
+
+    /// Wire the audio render clock + output-latency source. Called once by
+    /// the AudioEngine after the engine exists. Passing these makes
+    /// `nowSongSeconds` track the audio hardware's sample clock (drift-
+    /// free) and `audibleSongSeconds` latency-compensate. Both closures
+    /// may be invoked from audio render threads under `lock`.
+    public func attachRenderClock(
+        sampleProvider: @escaping () -> RenderSample?,
+        outputLatencyProvider: @escaping () -> Double
+    ) {
+        lock.lock(); defer { lock.unlock() }
+        _renderSampleProvider = sampleProvider
+        _outputLatencyProvider = outputLatencyProvider
     }
 
     /// Playback rate: song-seconds advance at `rate` × wall-clock
@@ -108,7 +182,7 @@ public final class TransportClock: @unchecked Sendable {
         guard newRate > 0, newRate != _rate else { return }
         _accumulatedSongSeconds = _nowSongSecondsLocked()
         if _state == .playing {
-            _anchorHostTime = hostTimeProvider()
+            _reanchorLocked()
         }
         _rate = newRate
     }
@@ -118,7 +192,7 @@ public final class TransportClock: @unchecked Sendable {
     public func play() {
         lock.lock(); defer { lock.unlock() }
         if _state == .playing { return }
-        _anchorHostTime = hostTimeProvider()
+        _reanchorLocked()
         _state = .playing
     }
 
@@ -135,6 +209,7 @@ public final class TransportClock: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         _accumulatedSongSeconds = 0
         _anchorHostTime = hostTimeProvider()
+        _anchorRenderSample = nil
         _state = .stopped
     }
 
@@ -146,11 +221,21 @@ public final class TransportClock: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         _accumulatedSongSeconds = seconds
         if _state == .playing {
-            _anchorHostTime = hostTimeProvider()
+            _reanchorLocked()
         }
     }
 
     // MARK: - Private
+
+    /// Reset both anchors for a fresh playing segment (play / seek-while-
+    /// playing / rate change). Sampling the render clock here means the
+    /// wall-clock fallback is only ever used before the engine's first
+    /// render, after which `_nowSongSecondsLocked` adopts the sample
+    /// anchor. Must be called under `lock`.
+    private func _reanchorLocked() {
+        _anchorHostTime = hostTimeProvider()
+        _anchorRenderSample = _renderSampleProvider?()
+    }
 
     private func _nowSongSecondsLocked() -> Double {
         switch _state {
@@ -159,10 +244,39 @@ public final class TransportClock: @unchecked Sendable {
         case .paused:
             return _accumulatedSongSeconds
         case .playing:
-            let now = hostTimeProvider()
-            let elapsedTicks = Double(now &- _anchorHostTime)
-            return _accumulatedSongSeconds
-                + (elapsedTicks / ticksPerSecond) * _rate
+            // Preferred path: derive elapsed from the audio SAMPLE clock,
+            // which advances at the true DAC rate (drift-free vs audio).
+            // The `>= anchor` guard rejects a BACKWARD jump — AVAudioEngine
+            // resets the output node's sample time when it restarts under
+            // us (config change / media-services reset), which would
+            // otherwise yield a negative elapsed and lurch the clock
+            // backward. That case drops through to the wall clock, which
+            // re-anchors onto the fresh sample clock below.
+            if let anchor = _anchorRenderSample,
+               let now = _renderSampleProvider?(), now.sampleRate > 0,
+               now.sampleTime >= anchor.sampleTime {
+                let elapsed = Double(now.sampleTime - anchor.sampleTime)
+                    / now.sampleRate
+                return _accumulatedSongSeconds + elapsed * _rate
+            }
+            // No usable render sample: headless tests, the pre-first-render
+            // window, an engine stopped mid-load, or a just-restarted
+            // engine whose sample clock reset. Advance by the wall clock
+            // from the current anchor…
+            let wallNow = hostTimeProvider()
+            let wallElapsed = Double(wallNow &- _anchorHostTime) / ticksPerSecond
+            let songNow = _accumulatedSongSeconds + wallElapsed * _rate
+            // …and if a (fresh) render sample now exists, adopt it as the
+            // anchor at THIS position so subsequent reads are drift-free
+            // again — the one-time handoff (first render after play/seek,
+            // or the first render after an engine restart) that moves the
+            // clock off the wall fallback and onto the sample clock.
+            if let now = _renderSampleProvider?(), now.sampleRate > 0 {
+                _accumulatedSongSeconds = songNow
+                _anchorHostTime = wallNow
+                _anchorRenderSample = now
+            }
+            return songNow
         }
     }
 

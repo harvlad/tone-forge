@@ -204,6 +204,19 @@ public final class AudioSessionController: ObservableObject {
         #endif
     }
 
+    /// Hardware output latency in seconds (DAC + IO buffer + Bluetooth
+    /// codec). The engine renders this far AHEAD of what the DAC is
+    /// currently sounding, so the transport's `audibleSongSeconds`
+    /// subtracts it to keep the chord ribbon from leading the audio —
+    /// wired outputs are ~10-30 ms, Bluetooth 150-250 ms.
+    public var outputLatency: Double {
+        #if os(iOS)
+        return AVAudioSession.sharedInstance().outputLatency
+        #else
+        return 0
+        #endif
+    }
+
     /// Request a lower buffer size for tighter touch-to-audio latency.
     /// The system may ignore this — always read ``ioBufferDuration``
     /// after to see what actually landed.

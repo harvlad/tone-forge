@@ -120,7 +120,7 @@ public final class LearnSessionController: ObservableObject {
     /// sections doubles as muscle-memory layout.
     public var songChords: [String] {
         var seen = Set<String>()
-        return (app.currentBundle?.timeline.chords ?? [])
+        return (app.currentBundle?.timeline.resolvedChords ?? [])
             .map(\.symbol)
             .filter { seen.insert($0).inserted }
     }
@@ -131,7 +131,7 @@ public final class LearnSessionController: ObservableObject {
         let bars = SectionBars.bars(
             section: section,
             downbeats: app.currentBundle?.timeline.downbeats ?? [],
-            chords: app.currentBundle?.timeline.chords ?? [],
+            chords: app.currentBundle?.timeline.resolvedChords ?? [],
             tempoBpm: app.currentBundle?.meta.tempoBpm
         )
         var out: [String] = []
@@ -212,7 +212,7 @@ public final class LearnSessionController: ObservableObject {
     /// Prediction against the live transport.
     public func prediction(atTime: Double? = nil) -> ChordPrediction? {
         Self.prediction(
-            chords: app.currentBundle?.timeline.chords ?? [],
+            chords: app.currentBundle?.timeline.resolvedChords ?? [],
             current: app.currentChord,
             now: atTime ?? app.songSeconds
         )
@@ -252,7 +252,7 @@ public final class LearnSessionController: ObservableObject {
 
         let hit = LearnScorer.isHit(
             press: press,
-            chords: app.currentBundle?.timeline.chords ?? []
+            chords: app.currentBundle?.timeline.resolvedChords ?? []
         )
         lastPressHit = hit
         if hit { passHits += 1 } else { passMisses += 1 }
@@ -273,7 +273,7 @@ public final class LearnSessionController: ObservableObject {
         guard phase == .practicing, let section = activeSection else { return }
         let result = LearnScorer.score(
             presses: presses,
-            chords: app.currentBundle?.timeline.chords ?? [],
+            chords: app.currentBundle?.timeline.resolvedChords ?? [],
             sectionStart: section.start,
             sectionEnd: section.end
         )

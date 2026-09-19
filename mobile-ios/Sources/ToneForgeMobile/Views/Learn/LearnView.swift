@@ -55,7 +55,7 @@ struct LearnView: View {
         .sheet(isPresented: $showTransitions) {
             ChordTransitionSheet(
                 pairs: ChordTransitionSheet.pairs(
-                    from: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []),
+                    from: appState.currentBundle?.timeline.resolvedChords.map(\.symbol) ?? []),
                 onPlayChord: { appState.jamController.trigger(symbol: $0) }
             )
         }
@@ -85,13 +85,13 @@ struct LearnView: View {
     /// chord boundary and the hero renders an empty board.
     private var displayedChord: ChordEvent? {
         if let current = appState.currentChord { return current }
-        let chords = appState.currentBundle?.timeline.chords ?? []
+        let chords = appState.currentBundle?.timeline.resolvedChords ?? []
         return chords.first { $0.start > appState.songSeconds }
     }
 
     /// First chord that starts after the displayed one.
     private var nextChordSymbol: String? {
-        let chords = appState.currentBundle?.timeline.chords ?? []
+        let chords = appState.currentBundle?.timeline.resolvedChords ?? []
         guard let shown = displayedChord else { return nil }
         return chords.first { $0.start > shown.start + 0.01 }?.symbol
     }
@@ -101,7 +101,7 @@ struct LearnView: View {
     /// the bar agrees with the hero during the pre-first-chord prime.
     private var heroPrediction: LearnSessionController.ChordPrediction? {
         LearnSessionController.prediction(
-            chords: appState.currentBundle?.timeline.chords ?? [],
+            chords: appState.currentBundle?.timeline.resolvedChords ?? [],
             current: displayedChord,
             now: appState.songSeconds
         )

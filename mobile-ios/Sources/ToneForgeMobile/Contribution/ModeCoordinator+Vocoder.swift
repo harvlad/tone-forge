@@ -148,7 +148,7 @@ extension ModeCoordinator {
     /// else empty (the carrier builders drone / PSOLA falls back to
     /// nearest-tone).
     private func chordSpans(midiBase: Int) -> [VocoderCarriers.ChordSpan] {
-        if let chords = app.currentBundle?.timeline.chords, !chords.isEmpty {
+        if let chords = app.currentBundle?.timeline.resolvedChords, !chords.isEmpty {
             let now = app.audioEngine.clock.nowSongSeconds
             var spans: [VocoderCarriers.ChordSpan] = []
             for chord in chords where chord.end > now {

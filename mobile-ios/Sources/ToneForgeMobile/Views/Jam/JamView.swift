@@ -376,7 +376,7 @@ struct JamView: View {
                 currentChordSymbol: appState.currentChord?.symbol,
                 nextChordSymbol: appState.nextChord?.symbol,
                 followEnabled: jamSettings.followEnabled,
-                songChordSymbols: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []
+                songChordSymbols: appState.currentBundle?.timeline.resolvedChords.map(\.symbol) ?? []
             )
         case .samples:
             // The Launchpad: the active pack (auto-built Auto Kit) as a
@@ -1015,7 +1015,7 @@ struct JamView: View {
     /// countdown strip. Only shown when a song with chords is loaded.
     @ViewBuilder
     private var followChip: some View {
-        if appState.currentBundle?.timeline.chords.isEmpty == false {
+        if appState.currentBundle?.timeline.resolvedChords.isEmpty == false {
             Button {
                 jamSettings.followEnabled.toggle()
             } label: {
