@@ -1,0 +1,253 @@
+[
+  {
+    "id": "crate:fma:0001",
+    "title": "Neon Rain",
+    "artist": "Aria Vale",
+    "album": "Afterglow",
+    "year": 2021,
+    "genre": "electronic",
+    "subgenres": [
+      "synthwave"
+    ],
+    "tags": [
+      "dreamy",
+      "retro",
+      "analog",
+      "night"
+    ],
+    "mood": "dreamy",
+    "license": {
+      "license_id": "CC0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution": "\u201cNeon Rain\u201d by Aria Vale (CC0 1.0), https://freemusicarchive.org/music/aria-vale/neon-rain",
+      "source": "fma",
+      "source_track_id": "fma-neon-rain-0001",
+      "source_url": "https://freemusicarchive.org/music/aria-vale/neon-rain",
+      "content_hash": "seed0001aria0000000000000000000000000000000000000000000000000000",
+      "acquired_at": "2026-09-14T00:00:01+00:00",
+      "export_encumbered": false
+    },
+    "features": {
+      "tempo_bpm": 120.0,
+      "tempo_confidence": 0.0,
+      "detected_key": "A minor",
+      "key_confidence": 0.71,
+      "duration_s": 64.0,
+      "section_count": 4,
+      "time_signature": [
+        4,
+        4
+      ],
+      "energy": 0.42875,
+      "energy_profile": [
+        0.22,
+        0.41,
+        0.63,
+        0.44
+      ],
+      "available_stems": [
+        "drums",
+        "bass",
+        "other"
+      ],
+      "instrumentation": [
+        "bass",
+        "drums",
+        "synth",
+        "other"
+      ],
+      "has_vocals": false,
+      "loudness_lufs": null,
+      "spectral_centroid": null,
+      "pc_histogram": [
+        0.6123724356957946,
+        0.0,
+        0.20412414523193154,
+        0.0,
+        0.4082482904638631,
+        0.20412414523193154,
+        0.0,
+        0.4082482904638631,
+        0.0,
+        0.4082482904638631,
+        0.0,
+        0.20412414523193154
+      ],
+      "melody_register": 72,
+      "melody_confidence": 0.62
+    },
+    "stem_asset_base": "crate/fma/0001",
+    "preview_url": null,
+    "graph_available": true,
+    "attribution": "\u201cNeon Rain\u201d by Aria Vale (CC0 1.0), https://freemusicarchive.org/music/aria-vale/neon-rain",
+    "licenseId": "CC0",
+    "exportEncumbered": false
+  },
+  {
+    "id": "crate:jamendo:0002",
+    "title": "Sunset Drive",
+    "artist": "The Wave Runners",
+    "album": "Coastlines",
+    "year": 2019,
+    "genre": "indie rock",
+    "subgenres": [
+      "surf rock"
+    ],
+    "tags": [
+      "upbeat",
+      "guitar",
+      "summer",
+      "driving"
+    ],
+    "mood": "upbeat",
+    "license": {
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "\u201cSunset Drive\u201d by The Wave Runners (CC BY 4.0), https://www.jamendo.com/track/0002/sunset-drive",
+      "source": "jamendo",
+      "source_track_id": "jamendo-0002",
+      "source_url": "https://www.jamendo.com/track/0002/sunset-drive",
+      "content_hash": "seed0002wave0000000000000000000000000000000000000000000000000000",
+      "acquired_at": "2026-09-14T00:00:02+00:00",
+      "export_encumbered": false
+    },
+    "features": {
+      "tempo_bpm": 128.0,
+      "tempo_confidence": 0.0,
+      "detected_key": "C major",
+      "key_confidence": 0.66,
+      "duration_s": 96.0,
+      "section_count": 4,
+      "time_signature": [
+        4,
+        4
+      ],
+      "energy": 0.52125,
+      "energy_profile": [
+        0.28,
+        0.5,
+        0.72,
+        0.55
+      ],
+      "available_stems": [
+        "drums",
+        "bass",
+        "other",
+        "vocals"
+      ],
+      "instrumentation": [
+        "guitar",
+        "bass",
+        "drums",
+        "other",
+        "vocals"
+      ],
+      "has_vocals": true,
+      "loudness_lufs": null,
+      "spectral_centroid": null,
+      "pc_histogram": [
+        0.6123724356957945,
+        0.0,
+        0.20412414523193148,
+        0.0,
+        0.40824829046386296,
+        0.20412414523193148,
+        0.0,
+        0.40824829046386296,
+        0.0,
+        0.40824829046386296,
+        0.0,
+        0.20412414523193148
+      ],
+      "melody_register": 69,
+      "melody_confidence": 0.78
+    },
+    "stem_asset_base": "crate/jamendo/0002",
+    "preview_url": null,
+    "graph_available": true,
+    "attribution": "\u201cSunset Drive\u201d by The Wave Runners (CC BY 4.0), https://www.jamendo.com/track/0002/sunset-drive",
+    "licenseId": "CC-BY-4.0",
+    "exportEncumbered": false
+  },
+  {
+    "id": "crate:ccmixter:0003",
+    "title": "Blue Ember",
+    "artist": "Kilo Sound",
+    "album": "Slow Coals",
+    "year": 2020,
+    "genre": "downtempo",
+    "subgenres": [
+      "trip hop"
+    ],
+    "tags": [
+      "mellow",
+      "moody",
+      "chill",
+      "night"
+    ],
+    "mood": "mellow",
+    "license": {
+      "license_id": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attribution": "\u201cBlue Ember\u201d by Kilo Sound (CC BY-SA 4.0), http://ccmixter.org/files/kilosound/0003",
+      "source": "ccmixter",
+      "source_track_id": "ccmixter-0003",
+      "source_url": "http://ccmixter.org/files/kilosound/0003",
+      "content_hash": "seed0003kilo0000000000000000000000000000000000000000000000000000",
+      "acquired_at": "2026-09-14T00:00:03+00:00",
+      "export_encumbered": true
+    },
+    "features": {
+      "tempo_bpm": 90.0,
+      "tempo_confidence": 0.0,
+      "detected_key": "E minor",
+      "key_confidence": 0.58,
+      "duration_s": 72.0,
+      "section_count": 3,
+      "time_signature": [
+        4,
+        4
+      ],
+      "energy": 0.34375,
+      "energy_profile": [
+        0.18,
+        0.34,
+        0.49
+      ],
+      "available_stems": [
+        "drums",
+        "other"
+      ],
+      "instrumentation": [
+        "drums",
+        "synth",
+        "other"
+      ],
+      "has_vocals": false,
+      "loudness_lufs": null,
+      "spectral_centroid": null,
+      "pc_histogram": [
+        0.20415285041408068,
+        0.0,
+        0.4082291530777249,
+        0.0,
+        0.40826742695294316,
+        0.0,
+        0.2041145765388624,
+        0.6123820034918056,
+        0.0,
+        0.2041145765388624,
+        0.0,
+        0.40822915307772495
+      ],
+      "melody_register": 67,
+      "melody_confidence": 0.55
+    },
+    "stem_asset_base": "crate/ccmixter/0003",
+    "preview_url": null,
+    "graph_available": true,
+    "attribution": "\u201cBlue Ember\u201d by Kilo Sound (CC BY-SA 4.0), http://ccmixter.org/files/kilosound/0003",
+    "licenseId": "CC-BY-SA-4.0",
+    "exportEncumbered": true
+  }
+]

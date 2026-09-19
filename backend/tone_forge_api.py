@@ -6754,6 +6754,269 @@ async def get_borrow_sample(entry_id: str, fname: str) -> FileResponse:
     return FileResponse(str(path), media_type="audio/wav")
 
 
+# -----------------------------------------------------------------------------
+# Vinyl Crate — a shared, curated, read-only donor pool of legally-clean
+# (CC0/CC-BY) tracks. Two orthogonal entry points into the same CrateTrack set
+# plus the render/mount path, all reusing the borrow engine:
+#
+#   GET /api/crate/candidates    session-matched ranking (crate.match)
+#   GET /api/crate/search        faceted metadata browse (crate.search)
+#   GET /api/crate/{id}/borrow   matched loops via the borrow render path
+#
+# Additive fields only (no WS/HTTP contract break); the candidate rows are a
+# SUPERSET of the borrow-candidates shape (entryId/name/tempo/key/harmonic/
+# score/donorStem) so existing clients parse them unchanged. Attribution rides
+# on every row and every rendered pad — a CC-BY obligation.
+# -----------------------------------------------------------------------------
+
+
+def _split_csv(raw: Optional[str]) -> Optional[list]:
+    if not raw:
+        return None
+    out = [tok.strip() for tok in raw.split(",") if tok.strip()]
+    return out or None
+
+
+@app.get("/api/crate/search")
+async def get_crate_search(
+    q: Optional[str] = Query(None, description="Free-text over title/artist/album/tags/genre/mood"),
+    genre: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None, description="Comma-separated; OR within the facet"),
+    mood: Optional[str] = Query(None),
+    tempo_min: Optional[float] = Query(None),
+    tempo_max: Optional[float] = Query(None),
+    key: Optional[str] = Query(None, description="Exact key, e.g. 'A minor'"),
+    camelot: Optional[str] = Query(None, description="Camelot code, e.g. '8A' (wheel neighbourhood)"),
+    stems: Optional[str] = Query(None, description="Comma-separated must-include stems"),
+    has_vocals: Optional[bool] = Query(None),
+    license: Optional[str] = Query(None, description="Comma-separated CrateLicense values"),
+    clean_export: bool = Query(False, description="Exclude export-encumbered (CC-BY-SA) tracks"),
+    duration_min: Optional[float] = Query(None),
+    duration_max: Optional[float] = Query(None),
+    sort: str = Query("relevance"),
+    limit: int = Query(50),
+    offset: int = Query(0),
+) -> JSONResponse:
+    """Faceted browse over the crate — the "dig the crate" surface. No session
+    needed. Facets AND across categories, OR within a multi-valued one; every
+    row carries its attribution for display (CC-BY)."""
+    from tone_forge.crate import registry as _crate
+    from tone_forge.crate import search as _csearch
+
+    tracks = await asyncio.to_thread(_crate.load_crate)
+    res = _csearch.search_crate(
+        tracks, q=q, genre=genre, tags=_split_csv(tags), mood=mood,
+        tempo_min=tempo_min, tempo_max=tempo_max, key=key, camelot=camelot,
+        stems=_split_csv(stems), has_vocals=has_vocals,
+        license_ids=_split_csv(license), clean_export=clean_export,
+        duration_min=duration_min, duration_max=duration_max, sort=sort,
+        limit=limit, offset=offset)
+    return JSONResponse({
+        "tracks": [_crate.track_to_dict(t) for t in res["tracks"]],
+        "facetCounts": res["facetCounts"],
+        "total": res["total"],
+    })
+
+
+@app.get("/api/crate/candidates")
+async def get_crate_candidates(
+    session_id: Optional[str] = Query(None, description="Current song id for tempo/key/melody/stem context"),
+    stem: str = Query("other", description="Part to borrow: drums|bass|other|vocals"),
+    genre_mode: str = Query("similar", description="similar | contrast"),
+    genre: Optional[str] = Query(None, description="Pre-rank facet filter"),
+    mood: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+    key: Optional[str] = Query(None),
+    camelot: Optional[str] = Query(None),
+    license_clean: bool = Query(False, description="Only clean-export (exclude CC-BY-SA)"),
+    limit: int = Query(24),
+) -> JSONResponse:
+    """Crate tracks ranked for THIS session by the weighted match model
+    (tempo + harmony + melody + energy + genre + instrumentation), reusing the
+    borrow gates/primitives. Facet filters apply PRE-ranking so search stacks
+    with match rather than competing. Blank canvas (no session_id) ranks on the
+    session-independent signals."""
+    from tone_forge.crate import match as _cmatch
+    from tone_forge.crate import registry as _crate
+    from tone_forge.crate import search as _csearch
+    from tone_forge.performance import borrow as _borrow
+
+    tracks = await asyncio.to_thread(_crate.load_crate)
+    # Pre-rank facet filter (the two models stack).
+    filtered = _csearch.search_crate(
+        tracks, genre=genre, mood=mood, tags=_split_csv(tags), key=key,
+        camelot=camelot, clean_export=license_clean, limit=len(tracks) or 1)["tracks"]
+
+    session_result = None
+    if session_id:
+        entry = _get_history_item(session_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Session song not found")
+        r = entry.get("result")
+        session_result = r if isinstance(r, dict) else None
+
+    # Load stored analysis blobs for the richer melody/harmony terms.
+    blobs: dict = {}
+    for t in filtered:
+        b = await asyncio.to_thread(_crate.analysis_blob, t.id)
+        if isinstance(b, dict):
+            blobs[t.id] = b
+
+    ranked = _cmatch.rank_crate(
+        session_result, filtered, blobs, stem=stem, genre_mode=genre_mode,
+        clean_export=license_clean, limit=limit)
+
+    by_id = {t.id: t for t in filtered}
+    candidates = []
+    for sc in ranked:
+        t = by_id.get(sc["trackId"])
+        if t is None:
+            continue
+        row = _crate.track_to_dict(t)
+        # Superset of the borrow-candidates shape (entryId/name/tempo/key/
+        # harmonic/score/donorStem) so borrow clients parse it unchanged.
+        row.update({
+            "entryId": t.id,
+            "name": t.title,
+            "tempo": t.features.tempo_bpm,
+            "key": t.features.detected_key,
+            "score": sc["matchScore"],
+            "donorStem": sc["targetStem"],
+            "matchScore": sc["matchScore"],
+            "signals": sc["signals"],
+            "harmonic": sc["harmonic"],
+            "tempoDistance": sc["tempoDistance"],
+            "transposeSemis": sc["transposeSemis"],
+            "stretchRatio": sc["stretchRatio"],
+            "targetStem": sc["targetStem"],
+        })
+        candidates.append(row)
+
+    return JSONResponse({
+        "sessionId": session_id,
+        "stem": stem,
+        "genreMode": genre_mode,
+        "targetTempo": (_borrow._tempo_of(session_result) if session_result else None),
+        "targetKey": ((session_result.get("detected_key") or session_result.get("key"))
+                      if isinstance(session_result, dict) else None),
+        "candidates": candidates,
+    })
+
+
+@app.get("/api/crate/sample/{fname}")
+async def get_crate_sample(fname: str) -> FileResponse:
+    """Serve one rendered crate-borrow loop from the shared borrow cache. Same
+    cache + filename scheme as /borrow-sample (crate id is the source_id, so
+    crate renders never collide with user renders)."""
+    import re
+
+    from tone_forge.performance.borrow import sample_path
+
+    if not re.fullmatch(r"borrow_[a-f0-9]+\.wav", fname):
+        raise HTTPException(status_code=404, detail="No such sample")
+    path = sample_path(fname)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No such sample")
+    return FileResponse(str(path), media_type="audio/wav")
+
+
+@app.get("/api/crate/{crate_id}/borrow")
+async def get_crate_borrow(
+    crate_id: str,
+    session_id: Optional[str] = Query(None, description="Host session id (tempo/key conform target)"),
+    stem: str = Query("other", description="Part borrowed (labelling / packId)"),
+    target_bpm: Optional[float] = Query(None),
+    target_key: Optional[str] = Query(None),
+) -> JSONResponse:
+    """Render a crate track's curated auto-kit as borrow pads, conformed to the
+    session (donor tempo-matched + key-conformed; the session's own pads, when
+    present, stay TRUE). The crate twin of /api/song/{id}/borrow — same
+    kit_borrow_job, same borrow cache, same SamplePack manifest so every
+    surface mounts crate loops through the identical arrangeBorrowLayout path.
+    Each returned pad carries its CC-BY attribution + license id."""
+    from tone_forge.crate import registry as _crate
+    from tone_forge.performance import borrow as _borrow
+
+    track = _crate.get_track(crate_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="Crate track not found")
+    donor_result = await asyncio.to_thread(_crate.analysis_blob, crate_id)
+    if not isinstance(donor_result, dict) or not donor_result:
+        raise HTTPException(status_code=422, detail="Crate track has no stored analysis")
+    _refresh_r2_stem_urls(donor_result)
+
+    # Host = the user's session (optional). Blank canvas → render the crate
+    # track's own kit at its own tempo (host==donor semantics, one job).
+    host_result = None
+    host_name = "This song"
+    if session_id:
+        entry = _get_history_item(session_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Session song not found")
+        hr = entry.get("result")
+        if not isinstance(hr, dict):
+            raise HTTPException(status_code=422, detail="Session has no analysis result")
+        host_result = hr
+        host_name = str(entry.get("name") or "This song")[:24]
+        _refresh_r2_stem_urls(host_result)
+
+    donor_bpm_src = host_result if host_result else donor_result
+    host_bpm = _borrow._tempo_of(donor_bpm_src)
+    if not host_bpm:
+        raise HTTPException(status_code=422, detail="No tempo to conform to")
+    host_key = ((host_result.get("detected_key") or host_result.get("key"))
+                if host_result else (donor_result.get("detected_key")
+                                     or donor_result.get("key")))
+    donor_bpm = target_bpm if target_bpm else host_bpm
+    donor_key = target_key if target_key else host_key
+    donor_name = str(track.title or "Crate")[:24]
+
+    loop = asyncio.get_running_loop()
+    donor_job = loop.run_in_executor(
+        _render_pool(), _borrow.kit_borrow_job, crate_id, donor_result,
+        donor_bpm, "donor", donor_key, donor_name)
+    if host_result is None or session_id == crate_id:
+        host_pads = []
+        donor_pads = await donor_job
+    else:
+        host_job = loop.run_in_executor(
+            _render_pool(), _borrow.kit_borrow_job, session_id, host_result,
+            host_bpm, "initial", None, host_name)
+        host_pads, donor_pads = await asyncio.gather(host_job, donor_job)
+    host_pads = host_pads or []
+    donor_pads = donor_pads or []
+    for i, p in enumerate(host_pads):
+        p["padIdx"] = i
+    for j, p in enumerate(donor_pads):
+        p["padIdx"] = len(host_pads) + j
+        # CC-BY: the attribution + encumbrance must ride with every crate pad
+        # wherever it displays (search row, ranked row, AND the mounted pad).
+        p["attribution"] = track.license.attribution
+        p["licenseId"] = track.license.license_id.value
+        p["exportEncumbered"] = track.license.export_encumbered
+    pads = host_pads + donor_pads
+    if not pads:
+        raise HTTPException(
+            status_code=422,
+            detail="No borrowable loops (tempo too far, or stem/graph missing)")
+    for p in pads:
+        p["sampleUrl"] = f"/api/crate/sample/{p.pop('sampleFile')}"
+    return JSONResponse({
+        "manifestVersion": 2,
+        "packId": f"crate-{crate_id}-{stem}",
+        "name": f"{donor_name} · crate",
+        "family": "mixed",
+        "paletteHint": "song",
+        "pads": pads,
+        "crateId": crate_id,
+        "sessionId": session_id,
+        "stem": stem,
+        "attribution": track.license.attribution,
+        "licenseId": track.license.license_id.value,
+        "exportEncumbered": track.license.export_encumbered,
+    })
+
+
 @app.get("/api/song/{entry_id}/redrum-candidates")
 async def get_redrum_candidates(entry_id: str) -> JSONResponse:
     """Ranked kit-donor suggestions for Re-Drum: analyzed songs whose
