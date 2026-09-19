@@ -117,6 +117,37 @@ a = torch.randn(2048, 2048, device="cuda"); b = (a @ a).sum().item()
 torch.cuda.synchronize(); print("GPU MATMUL OK:", b, "|", torch.cuda.get_device_name(0))
 PY
 
+# 3c. ONNX/basic_pitch MIDI smoke test — the crate config runs basic_pitch on
+#     the ONNX CUDA provider, and a mismatched onnxruntime-gpu (installed by
+#     step 2b onto this GENERIC base, whose cuDNN may not match the wheel) can
+#     HANG for minutes on InferenceSession creation (GPU idle, CPU idle) instead
+#     of erroring — the wedge that froze the A40 canary 40 min into a real track.
+#     Prove the GPU-MIDI path builds a session + runs on a 1s dummy signal in a
+#     few seconds, LOUDLY, up front. Best-effort: a failure prints a big warning
+#     but never aborts the pod — the pipeline's onnx-guard forces CPU and the
+#     per-stage MIDI timeout still bounds any residual hang at runtime.
+echo "==> ONNX/basic_pitch MIDI smoke test (30s budget)"
+timeout 30 python - <<'PY' || echo "########## WARN: MIDI/ONNX smoke test FAILED/TIMED OUT — GPU-MIDI env may hang; pipeline onnx-guard + per-stage timeout will catch it at runtime ##########"
+import time, tempfile
+import numpy as np, soundfile as sf
+t0 = time.time()
+import onnxruntime as ort
+print("onnxruntime", ort.__version__, "| available providers:", ort.get_available_providers())
+from basic_pitch import ICASSP_2022_MODEL_PATH
+mp = str(ICASSP_2022_MODEL_PATH)
+if mp.endswith(".onnx"):
+    # Report which EP actually wins for a CUDA-first session (this is the call
+    # that hangs on a broken env — the outer `timeout 30` is the real guard).
+    sess = ort.InferenceSession(mp, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    print("basic_pitch ONNX session providers:", sess.get_providers(), f"({time.time()-t0:.1f}s to init)")
+from basic_pitch.inference import predict
+y = (0.1 * np.sin(2 * np.pi * 220 * np.linspace(0, 1, 22050))).astype("float32")
+with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+    sf.write(f.name, y, 22050); path = f.name
+_, _, events = predict(path, ICASSP_2022_MODEL_PATH)
+print(f"basic_pitch OK: {len(events)} note-events on 1s signal in {time.time()-t0:.1f}s total")
+PY
+
 # 4. Run the shard under the watchdog. TONEFORGE_EXPECT_GPU (set by the fleet)
 #    makes ingest_crate hard-exit if CUDA vanished — which matters now that the
 #    crate config runs the full GPU-accelerated ensemble MIDI stage.

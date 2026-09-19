@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -74,6 +75,214 @@ async def run_in_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
         return await loop.run_in_executor(get_thread_executor(), wrapper)
     return await loop.run_in_executor(get_thread_executor(), func, *args)
+
+
+# =============================================================================
+# Per-stage timeout guard — a hung stage can NEVER wedge the pod
+# =============================================================================
+# RCA (crate canary, A40, 2026-09): a track froze for 27+ min with the GPU at
+# 0% and the CPU idle — i.e. BLOCKED (a C-level onnxruntime CUDA-provider init,
+# a lock, or a subprocess wait), not computing. Every heavy stage already runs
+# inside a try/except, but a try/except cannot catch a HANG — only a wall-clock
+# timeout can. These defaults are generous (a normal stage finishes far inside
+# them, so the happy path never trips a timeout) and env-tunable for canaries.
+_DEFAULT_STAGE_TIMEOUT_S = float(os.environ.get("TONEFORGE_STAGE_TIMEOUT_S", "300"))
+_DEFAULT_MIDI_TIMEOUT_S = float(os.environ.get("TONEFORGE_MIDI_TIMEOUT_S", "600"))
+
+
+class StageTimeout(Exception):
+    """A heavy analysis stage exceeded its wall-clock budget and was skipped.
+
+    Subclasses ``Exception`` on purpose: every heavy stage is already wrapped in
+    an ``except Exception`` that logs a warning and lets the TRACK continue, so
+    raising this needs no new branch at each call site — the stage is dropped,
+    the rest of the track proceeds, and the pod stays healthy.
+    """
+
+
+async def run_stage_with_timeout(func, *, stage: str, stem: str = "-", timeout_s: float):
+    """Run a blocking analysis stage in a daemon thread under a hard timeout.
+
+    Why a bespoke daemon thread instead of ``run_in_thread`` +
+    ``asyncio.wait_for``: a ``loop.run_in_executor`` future is NOT cancellable
+    once its work has started, and the shared pool is bounded (4 workers). A
+    stage that hangs in a C-level CUDA/onnx init would park a shared worker
+    forever and, after a few hung tracks, starve every later stage — the pod
+    wedges again, just more slowly. A private *daemon* thread per timed stage
+    means a hung stage leaks one thread that (a) never blocks interpreter exit
+    and (b) never steals a shared worker. The happy path is unchanged: the
+    thread finishes well inside the budget and we return its result.
+    """
+    if not timeout_s or timeout_s <= 0:
+        return await run_in_thread(func)
+
+    loop = asyncio.get_event_loop()
+    done: "asyncio.Future" = loop.create_future()
+
+    def _settle(setter, value):
+        # Runs on the loop thread. ``wait_for`` may have already cancelled
+        # ``done`` on timeout — swallow that; the late result is discarded.
+        if not done.cancelled() and not done.done():
+            setter(value)
+
+    def _schedule(setter, value):
+        # A leaked (timed-out) daemon thread may resolve long after the loop is
+        # gone — scheduling onto a closed loop raises RuntimeError. Swallow it:
+        # nobody is awaiting a skipped stage anymore.
+        try:
+            loop.call_soon_threadsafe(_settle, setter, value)
+        except RuntimeError:
+            pass
+
+    def _runner():
+        try:
+            res = func()
+        except BaseException as exc:  # deliver the real error to the awaiter
+            _schedule(done.set_exception, exc)
+        else:
+            _schedule(done.set_result, res)
+
+    threading.Thread(
+        target=_runner, name=f"stage-{stage}-{stem}"[:48], daemon=True
+    ).start()
+
+    try:
+        return await asyncio.wait_for(done, timeout_s)
+    except asyncio.TimeoutError:
+        logger.error(
+            "stage %s for %s timed out after %.0fs — skipping "
+            "(track continues; pod not wedged)",
+            stage, stem, timeout_s,
+        )
+        raise StageTimeout(
+            f"{stage} for {stem} timed out after {timeout_s:.0f}s"
+        ) from None
+
+
+# =============================================================================
+# ONNX Runtime CUDA-provider fail-fast (basic_pitch)
+# =============================================================================
+# basic_pitch builds ``ort.InferenceSession(model_path)`` with NO explicit
+# providers, so onnxruntime-gpu auto-selects CUDAExecutionProvider first. On a
+# crate pod whose onnxruntime-gpu wheel was pip-installed onto a GENERIC base
+# (crate_pod_bootstrap.sh step 2b) the CUDA EP's context/cuDNN init can BLOCK
+# — idle wait on a driver lock, GPU 0% / CPU 0% — instead of erroring: the exact
+# wedge seen on the A40 canary. We probe the CUDA provider ONCE, in a daemon
+# thread under a short timeout; if it hangs or throws we monkeypatch
+# InferenceSession to drop CUDA so every later basic_pitch call runs on
+# CPUExecutionProvider. Degraded-but-completing MIDI beats a hung pod. On a
+# healthy host (the baked prod image) the probe returns fast and nothing is
+# patched — the happy path is untouched.
+_onnx_guard_lock = threading.Lock()
+_onnx_guard_done = False
+_onnx_provider = "unknown"
+
+
+def _basic_pitch_onnx_model_path() -> Optional[str]:
+    """Resolve basic_pitch's ICASSP model, coerced to the ``.onnx`` variant."""
+    try:
+        from basic_pitch import ICASSP_2022_MODEL_PATH
+    except Exception:
+        return None
+    p = str(ICASSP_2022_MODEL_PATH)
+    if not p.endswith(".onnx"):
+        for suffix in (".mlpackage", ".tflite", ".pb"):
+            if p.endswith(suffix):
+                p = p[: -len(suffix)] + ".onnx"
+                break
+    return p if os.path.exists(p) else None
+
+
+def _force_onnx_cpu(ort) -> None:
+    """Monkeypatch ``ort.InferenceSession`` so all sessions run on CPU only."""
+    if getattr(ort.InferenceSession, "_jamn_cpu_forced", False):
+        return
+    _orig_init = ort.InferenceSession.__init__
+
+    def _cpu_only_init(self, path_or_bytes, sess_options=None,
+                       providers=None, provider_options=None, **kw):
+        return _orig_init(self, path_or_bytes, sess_options,
+                          ["CPUExecutionProvider"], None, **kw)
+
+    _cpu_only_init._jamn_cpu_forced = True
+    ort.InferenceSession.__init__ = _cpu_only_init
+
+
+def ensure_onnx_provider_ready(probe_timeout_s: float = 20.0) -> str:
+    """Probe onnxruntime's CUDA provider once; force CPU if it hangs/fails.
+
+    Best-effort and memoized (runs at most once per process). Returns the
+    resolved provider string for logging. Safe to call from a worker thread —
+    it uses ``Thread.join(timeout)``, not asyncio.
+    """
+    global _onnx_guard_done, _onnx_provider
+    with _onnx_guard_lock:
+        if _onnx_guard_done:
+            return _onnx_provider
+        _onnx_guard_done = True
+
+        try:
+            import onnxruntime as ort
+        except Exception:
+            _onnx_provider = "none(no-onnxruntime)"
+            return _onnx_provider
+
+        try:
+            avail = list(ort.get_available_providers())
+        except Exception:
+            avail = []
+        if "CUDAExecutionProvider" not in avail:
+            _onnx_provider = "cpu(no-cuda-ep)"
+            logger.info("onnx guard: CUDA EP not offered; basic_pitch → %s",
+                        avail or ["CPUExecutionProvider"])
+            return _onnx_provider
+
+        model_path = _basic_pitch_onnx_model_path()
+        if model_path is None:
+            # Can't probe without the model; leave onnxruntime to its own
+            # fallback. The per-stage MIDI timeout is still the backstop.
+            _onnx_provider = "cuda(unprobed)"
+            logger.info("onnx guard: CUDA EP offered, model not found — "
+                        "left unpatched (MIDI stage timeout still guards)")
+            return _onnx_provider
+
+        result: Dict[str, Any] = {}
+
+        def _probe():
+            try:
+                sess = ort.InferenceSession(
+                    model_path,
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                )
+                provs = sess.get_providers()
+                result["ok"] = True
+                result["prov"] = provs[0] if provs else "cpu"
+            except BaseException as exc:  # noqa: BLE001 - report, don't raise
+                result["err"] = repr(exc)
+
+        t = threading.Thread(target=_probe, name="onnx-cuda-probe", daemon=True)
+        t.start()
+        t.join(probe_timeout_s)
+
+        if t.is_alive():
+            _force_onnx_cpu(ort)
+            _onnx_provider = "cpu(forced-after-hang)"
+            logger.error(
+                "onnx guard: CUDAExecutionProvider init HUNG >%.0fs — forcing "
+                "CPUExecutionProvider for basic_pitch (degraded MIDI, pod safe)",
+                probe_timeout_s,
+            )
+        elif result.get("ok"):
+            _onnx_provider = str(result.get("prov", "cuda"))
+            logger.info("onnx guard: onnxruntime provider = %s", _onnx_provider)
+        else:
+            _force_onnx_cpu(ort)
+            _onnx_provider = "cpu(forced-after-error)"
+            logger.warning(
+                "onnx guard: CUDA probe failed (%s) — forcing "
+                "CPUExecutionProvider for basic_pitch", result.get("err"),
+            )
+        return _onnx_provider
 
 
 def _serialize_obj(obj: Any) -> Any:
@@ -147,6 +356,14 @@ class PipelineConfig:
     trim_end: Optional[float] = None
     max_duration: float = 300.0       # 5 minutes default
     target_sr: int = 22050
+
+    # Per-stage wall-clock timeouts (seconds). A hung stage (e.g. an
+    # onnxruntime CUDA-provider init that blocks with GPU+CPU idle) is dropped
+    # after its budget so the TRACK continues and the pod never wedges. Generous
+    # by design — a normal stage finishes far inside these, so the happy path
+    # never trips one. Env-tunable via TONEFORGE_STAGE_TIMEOUT_S / _MIDI_TIMEOUT_S.
+    stage_timeout_s: float = field(default_factory=lambda: _DEFAULT_STAGE_TIMEOUT_S)
+    midi_timeout_s: float = field(default_factory=lambda: _DEFAULT_MIDI_TIMEOUT_S)
 
     # Output options
     include_waveform: bool = False    # Return waveform data for visualization
@@ -1635,7 +1852,10 @@ class UnifiedPipeline:
                         "quality_report": quality_report,
                     })
 
-                result.quality = await run_in_thread(analyze_quality)
+                result.quality = await run_stage_with_timeout(
+                    analyze_quality, stage="quality", stem=stem_type,
+                    timeout_s=config.stage_timeout_s,
+                )
             except Exception as e:
                 logger.warning(f"Quality analysis failed for {stem_type}: {e}")
 
@@ -1650,7 +1870,10 @@ class UnifiedPipeline:
                     behavior = analyzer.analyze(y, sr)
                     return _serialize_obj(behavior)
 
-                result.synth_behavior = await run_in_thread(analyze_synth)
+                result.synth_behavior = await run_stage_with_timeout(
+                    analyze_synth, stage="synth_behavior", stem=stem_type,
+                    timeout_s=config.stage_timeout_s,
+                )
             except Exception as e:
                 logger.warning(f"Synth behavior analysis failed: {e}")
 
@@ -1682,7 +1905,10 @@ class UnifiedPipeline:
                         "tweak_hints": self._generate_synth_hints(synth_desc),
                     }
 
-                results["synth"] = await run_in_thread(analyze_synth)
+                results["synth"] = await run_stage_with_timeout(
+                    analyze_synth, stage="instruments:synth",
+                    timeout_s=config.stage_timeout_s,
+                )
             except Exception as e:
                 logger.warning(f"Synth analysis failed: {e}")
 
@@ -1713,7 +1939,10 @@ class UnifiedPipeline:
                         "tweak_hints": helix_card.tweak_hints,
                     }
 
-                results["guitar"] = await run_in_thread(analyze_guitar)
+                results["guitar"] = await run_stage_with_timeout(
+                    analyze_guitar, stage="instruments:guitar",
+                    timeout_s=config.stage_timeout_s,
+                )
             except Exception as e:
                 logger.warning(f"Guitar analysis failed: {e}")
 
@@ -1733,7 +1962,10 @@ class UnifiedPipeline:
                         "tweak_hints": self._generate_bass_hints(bass_desc),
                     }
 
-                results["bass"] = await run_in_thread(analyze_bass)
+                results["bass"] = await run_stage_with_timeout(
+                    analyze_bass, stage="instruments:bass",
+                    timeout_s=config.stage_timeout_s,
+                )
             except Exception as e:
                 logger.warning(f"Bass analysis failed: {e}")
 
@@ -1750,7 +1982,10 @@ class UnifiedPipeline:
                         "tweak_hints": self._generate_drum_hints(drum_desc),
                     }
 
-                results["drums"] = await run_in_thread(analyze_drums)
+                results["drums"] = await run_stage_with_timeout(
+                    analyze_drums, stage="instruments:drums",
+                    timeout_s=config.stage_timeout_s,
+                )
             except Exception as e:
                 logger.warning(f"Drums analysis failed: {e}")
 
@@ -1980,6 +2215,13 @@ class UnifiedPipeline:
 
 
         def extract():
+            # Fail-fast the onnxruntime CUDA provider BEFORE basic_pitch runs:
+            # a mismatched onnxruntime-gpu can hang InferenceSession creation
+            # (GPU+CPU idle) rather than error. The guard forces CPU on a bad
+            # env so the polyphonic pass degrades-but-completes instead of
+            # wedging. Memoized: real cost is paid at most once per process.
+            ensure_onnx_provider_ready()
+
             y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
 
             extractor = PitchEnsembleExtractor()
@@ -2030,7 +2272,10 @@ class UnifiedPipeline:
                 "provenance": self._build_midi_provenance(result) if config.include_provenance else None,
             }
 
-        return await run_in_thread(extract)
+        return await run_stage_with_timeout(
+            extract, stage="midi_ensemble", stem=stem_type,
+            timeout_s=config.midi_timeout_s,
+        )
 
     async def _extract_midi_basic(
         self,
@@ -2045,6 +2290,7 @@ class UnifiedPipeline:
 
 
         def extract():
+            ensure_onnx_provider_ready()  # same CUDA-EP fail-fast as the ensemble
             result = midi_extractor.extract_midi(
                 str(audio_path),
                 stem_type=stem_type,
@@ -2080,7 +2326,10 @@ class UnifiedPipeline:
                 "provenance": result.provenance if result.provenance else None,
             }
 
-        return await run_in_thread(extract)
+        return await run_stage_with_timeout(
+            extract, stage="midi_basic", stem=stem_type,
+            timeout_s=_DEFAULT_MIDI_TIMEOUT_S,
+        )
 
     def _build_midi_provenance(self, ensemble_result) -> Dict[str, Any]:
         """Build provenance data from ensemble extraction result."""
