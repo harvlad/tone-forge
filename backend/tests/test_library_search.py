@@ -80,6 +80,28 @@ def _hist(
     return entry
 
 
+def _result_hist(hid, name="Song", *, key=None, tempo=None, genre=None,
+                 mood=None, timestamp="2026-01-01T00:00:00", **extra):
+    """A history entry the way a REAL deep analysis persists one: the
+    detected key/tempo (and genre/mood) live INSIDE the ``result`` blob,
+    NOT at the entry top level. This is the shape ``_load_history()``
+    actually yields for analyzed songs (see _add_to_history full_result),
+    and the exact shape that made the Songs page project key/tempo=None.
+    """
+    result = {}
+    if key is not None:
+        result["detected_key"] = key
+    if tempo is not None:
+        result["tempo_bpm"] = tempo
+    if genre is not None:
+        result["genre"] = genre
+    if mood is not None:
+        result["mood"] = mood
+    entry = {"id": hid, "name": name, "timestamp": timestamp, "result": result}
+    entry.update(extra)
+    return entry
+
+
 def _job(job_id, *, status="running", percent=0.0, history_id=None,
          filename="upload.wav", created_at=0.0, meta=None):
     """A job dict the way ``public_dict()`` (plus injected ``meta``) yields."""
@@ -140,6 +162,70 @@ class TestUnionCollapse:
         (row,) = _src([], jobs).search(limit=50).tracks
         assert row.status == TrackStatus.ERROR
         assert row.progress == pytest.approx(0.55)
+
+
+# ---------------------------------------------------------------------------
+# projection: key/tempo/genre/mood must come off the nested result blob
+# ---------------------------------------------------------------------------
+
+class TestProjectionFromResult:
+    """Regression for the live prod bug: every analyzed row projected
+    key=None / tempo_bpm=None because the projection read only the entry
+    TOP level, while a real deep analysis stores detected_key/tempo_bpm
+    (and genre/mood) INSIDE the ``result`` blob. With key null, no key
+    facet bucket emitted, so the rail collapsed to status-only."""
+
+    def test_key_and_tempo_projected_from_result_blob(self):
+        rows = [_result_hist("H1", "Analyzed", key="C# mixolydian", tempo=110.5)]
+        (t,) = _src(rows).search(limit=50).tracks
+        assert t.key == "C# mixolydian"
+        assert t.tempo_bpm == pytest.approx(110.5)
+
+    def test_genre_and_mood_projected_from_result_blob(self):
+        rows = [_result_hist("H1", "Analyzed", genre="rock", mood="tense")]
+        (t,) = _src(rows).search(limit=50).tracks
+        assert t.genre == "rock"
+        assert t.mood == "tense"
+
+    def test_top_level_wins_over_result(self):
+        # A slimmed list row (top-level scalars) still projects, and beats
+        # the blob when both are present.
+        entry = _result_hist("H1", key="D", tempo=90)
+        entry["detected_key"] = "E"
+        entry["tempo_bpm"] = 128
+        (t,) = _src([entry]).search(limit=50).tracks
+        assert t.key == "E"
+        assert t.tempo_bpm == pytest.approx(128)
+
+    def test_key_facet_bucket_now_emits_for_analyzed_rows(self):
+        # The user-visible payoff: distinct detected keys become filter
+        # chips instead of vanishing (the "only status shows" symptom).
+        rows = [
+            _result_hist("H1", key="C major", tempo=120),
+            _result_hist("H2", key="C major", tempo=100),
+            _result_hist("H3", key="A minor", tempo=90),
+        ]
+        page = _src(rows).search(limit=50)
+        assert "key" in page.facets
+        keys = {b.value: b.count for b in page.facets["key"]}
+        assert keys == {"C major": 2, "A minor": 1}
+
+    def test_empty_facets_stay_hidden(self):
+        # Genre/mood genuinely absent on plain uploads → no bucket at all
+        # (hidden-when-empty preserved), while key still emits.
+        rows = [_result_hist("H1", key="G", tempo=120)]
+        page = _src(rows).search(limit=50)
+        assert "key" in page.facets
+        assert "genre" not in page.facets
+        assert "mood" not in page.facets
+
+    def test_key_filter_matches_result_projected_key(self):
+        rows = [
+            _result_hist("H1", key="C major", tempo=120),
+            _result_hist("H2", key="A minor", tempo=90),
+        ]
+        page = _src(rows).search(facets={"key": "c major"}, limit=50)
+        assert {t.source_ref for t in page.tracks} == {"H1"}
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +580,108 @@ class TestEndpointUnion:
         assert row["tempo_bpm"] == 128
         assert row["genre"] == "rock"
         assert isinstance(row["tags"], list)
+
+
+class TestEndpointFacetsFromResult:
+    """The composition point hands LibrarySource the FULL entry (result
+    blob included), so an analyzed song's key/tempo must project + a key
+    facet must emit + a ?key= filter must match — end to end."""
+
+    def test_key_tempo_project_and_key_facet_emits(self, client):
+        api._add_to_history({"name": "Song A"},
+                            full_result={"detected_key": "C major", "tempo_bpm": 120})
+        api._add_to_history({"name": "Song B"},
+                            full_result={"detected_key": "A minor", "tempo_bpm": 90})
+        resp = client.get("/api/library/search")
+        assert resp.status_code == 200
+        body = resp.json()
+        by_title = {t["title"]: t for t in body["tracks"]}
+        assert by_title["Song A"]["key"] == "C major"
+        assert by_title["Song A"]["tempo_bpm"] == 120
+        # The key facet now emits (was absent when key projected None).
+        assert "key" in body["facets"]
+        keys = {b["value"]: b["count"] for b in body["facets"]["key"]}
+        assert keys == {"C major": 1, "A minor": 1}
+        # genre/mood genuinely absent → those facets stay hidden.
+        assert "genre" not in body["facets"]
+        assert "mood" not in body["facets"]
+
+    def test_key_query_param_filters(self, client):
+        api._add_to_history({"name": "Song A"},
+                            full_result={"detected_key": "C major", "tempo_bpm": 120})
+        api._add_to_history({"name": "Song B"},
+                            full_result={"detected_key": "A minor", "tempo_bpm": 90})
+        resp = client.get("/api/library/search?key=C%20major")
+        assert resp.status_code == 200
+        titles = {t["title"] for t in resp.json()["tracks"]}
+        assert titles == {"Song A"}
+
+
+class TestEndpointDelete:
+    """DELETE /api/history/{id}: owner-gated at launch, but a testing-phase
+    SHARED_LIBRARY override lets an unsigned tester clean up shared songs."""
+
+    def test_owner_can_delete(self, client):
+        token, user = _sign_in()
+        entry = api._add_to_history({"name": "mine"}, owner_id=user.id)
+        client.cookies.set(SESSION_COOKIE, token)
+        resp = client.delete(f"/api/history/{entry['id']}")
+        assert resp.status_code == 200
+        assert entry["id"] not in {e.get("id") for e in api._load_history()}
+
+    def test_non_owner_403_without_flag(self, client, monkeypatch):
+        # Launch behaviour: a caller who owns neither the account nor the
+        # device the row is stamped to cannot delete it.
+        monkeypatch.delenv("TONEFORGE_SHARED_LIBRARY", raising=False)
+        entry = api._add_to_history({"name": "someone-elses"}, owner_id="other-user")
+        resp = client.delete(f"/api/history/{entry['id']}",
+                             headers={"X-Device-Id": "unsigned-tester"})
+        assert resp.status_code == 403
+        assert entry["id"] in {e.get("id") for e in api._load_history()}
+
+    def test_non_owner_can_delete_under_shared_library(self, client, monkeypatch):
+        # TESTING PHASE: an unsigned tester (no account) owns none of the
+        # shared test songs, but SHARED_LIBRARY=1 lets them clean up.
+        monkeypatch.setenv("TONEFORGE_SHARED_LIBRARY", "1")
+        entry = api._add_to_history({"name": "shared-song"}, owner_id="other-user")
+        resp = client.delete(f"/api/history/{entry['id']}",
+                             headers={"X-Device-Id": "unsigned-tester"})
+        assert resp.status_code == 200
+        assert entry["id"] not in {e.get("id") for e in api._load_history()}
+
+
+class TestEndpointDismissJob:
+    """DELETE /api/jobs/{id}: removes the backing failed engine job so the
+    Songs-page error row actually disappears (Dismiss). Owner-gated, with
+    the same SHARED_LIBRARY testing override as delete."""
+
+    def test_owner_dismisses_failed_job(self, client):
+        job = api._JOBS.create_engine_job(filename="bad.wav", device_id="dev-1")
+        job.status = "error"
+        resp = client.delete(f"/api/jobs/{job.id}", headers={"X-Device-Id": "dev-1"})
+        assert resp.status_code == 200
+        assert api._JOBS.get(job.id) is None
+
+    def test_missing_job_is_idempotent(self, client):
+        resp = client.delete("/api/jobs/does-not-exist",
+                             headers={"X-Device-Id": "dev-1"})
+        assert resp.status_code == 200
+
+    def test_non_owner_403_without_flag(self, client, monkeypatch):
+        monkeypatch.delenv("TONEFORGE_SHARED_LIBRARY", raising=False)
+        job = api._JOBS.create_engine_job(filename="bad.wav", device_id="owner-dev")
+        job.status = "error"
+        resp = client.delete(f"/api/jobs/{job.id}", headers={"X-Device-Id": "other-dev"})
+        assert resp.status_code == 403
+        assert api._JOBS.get(job.id) is not None
+
+    def test_non_owner_dismiss_under_shared_library(self, client, monkeypatch):
+        monkeypatch.setenv("TONEFORGE_SHARED_LIBRARY", "1")
+        job = api._JOBS.create_engine_job(filename="bad.wav", device_id="owner-dev")
+        job.status = "error"
+        resp = client.delete(f"/api/jobs/{job.id}", headers={"X-Device-Id": "other-dev"})
+        assert resp.status_code == 200
+        assert api._JOBS.get(job.id) is None
 
 
 class TestEndpointSource:

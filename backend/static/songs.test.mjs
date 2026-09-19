@@ -58,6 +58,15 @@ const {
   const p = new URLSearchParams(buildSearchQuery({ filters: { tempoMin: 0 } }));
   assert.equal(p.get("tempo_min"), "0");
 }
+// key + mood facets serialize to their backend param names (the facets
+// that were dark until the backend projection populated them).
+{
+  const p = new URLSearchParams(buildSearchQuery({
+    filters: { key: "C major", mood: "tense" },
+  }));
+  assert.equal(p.get("key"), "C major", "key facet is sent to the backend");
+  assert.equal(p.get("mood"), "tense", "mood facet is sent to the backend");
+}
 
 // ---- merge keys + live keys ----
 assert.equal(mergeKey({ history_id: "h1", source_ref: "job9" }), "h1", "history id wins");

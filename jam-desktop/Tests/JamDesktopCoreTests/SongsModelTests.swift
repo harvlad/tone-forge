@@ -21,6 +21,8 @@ private final class StubLibraryClient: LibrarySearching, @unchecked Sendable {
     var lastCursor: String??
     var ingestResult = IngestResult(historyId: "reused-1")
     var lastIngest: (SourceId, String)?
+    var deletedHistoryIds: [String] = []
+    var dismissedJobIds: [String] = []
 
     init(pages: [SearchPage]) { self.pages = pages }
 
@@ -41,6 +43,14 @@ private final class StubLibraryClient: LibrarySearching, @unchecked Sendable {
     func ingest(baseURL: URL, source: SourceId, sourceRef: String) async throws -> IngestResult {
         lastIngest = (source, sourceRef)
         return ingestResult
+    }
+
+    func delete(baseURL: URL, historyId: String) async throws {
+        deletedHistoryIds.append(historyId)
+    }
+
+    func dismissJob(baseURL: URL, jobId: String) async throws {
+        dismissedJobIds.append(jobId)
     }
 }
 
@@ -271,5 +281,38 @@ final class SongsModelFetchTests: XCTestCase {
         XCTAssertEqual(result?.historyId, "reused-9")
         XCTAssertEqual(stub.lastIngest?.0, .library)
         XCTAssertEqual(stub.lastIngest?.1, "h9")
+    }
+
+    func testRemoveOptimisticallyDropsRowAndDeletesServerSide() async {
+        let stub = StubLibraryClient(pages: [SearchPage(
+            tracks: [
+                SourceTrack(source: .library, sourceRef: "h1", historyId: "h1"),
+                SourceTrack(source: .library, sourceRef: "h2", historyId: "h2"),
+            ], total: 2)])
+        let model = SongsModel(client: stub)
+        await model.reload(baseURL: base)
+        let target = model.serverTracks.first { $0.historyId == "h1" }!
+        await model.remove(baseURL: base, track: target)
+        // Row dropped immediately (optimistic), total decremented, and the
+        // purge hit the backend with the history id.
+        XCTAssertEqual(model.serverTracks.map(\.mergeKey), ["h2"])
+        XCTAssertEqual(model.total, 1)
+        XCTAssertEqual(stub.deletedHistoryIds, ["h1"])
+    }
+
+    func testDismissJobDeletesTheBackingJobNotAHistoryRow() async {
+        // An error row is a failed engine job: sourceRef = job id, no
+        // historyId. Dismiss must delete the JOB so a reload can't
+        // resurrect it.
+        let stub = StubLibraryClient(pages: [SearchPage(
+            tracks: [SourceTrack(source: .library, sourceRef: "job-7",
+                                 status: .error, historyId: nil)])])
+        let model = SongsModel(client: stub)
+        await model.reload(baseURL: base)
+        let errored = model.serverTracks.first!
+        await model.dismissJob(baseURL: base, track: errored)
+        XCTAssertTrue(model.serverTracks.isEmpty, "error row dropped optimistically")
+        XCTAssertEqual(stub.dismissedJobIds, ["job-7"])
+        XCTAssertTrue(stub.deletedHistoryIds.isEmpty, "no history delete for a job row")
     }
 }

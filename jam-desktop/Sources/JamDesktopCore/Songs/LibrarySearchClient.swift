@@ -110,6 +110,16 @@ public protocol LibrarySearching: Sendable {
         source: SourceId,
         sourceRef: String
     ) async throws -> IngestResult
+
+    /// Remove a finished song from the library — purges the analysis
+    /// (stems, R2 objects, graph) server-side. Backs the row's "Remove
+    /// from Library" action.
+    func delete(baseURL: URL, historyId: String) async throws
+
+    /// Dismiss a failed analysis JOB (the Songs-page error-row "Dismiss").
+    /// An error row is a failed engine job surfaced in the union, so
+    /// removing the backing job is what actually clears the row.
+    func dismissJob(baseURL: URL, jobId: String) async throws
 }
 
 /// Production adapter over the backend endpoints.
@@ -207,5 +217,28 @@ public struct BackendLibrarySearchClient: LibrarySearching {
             throw LibrarySearchError.badStatus(http.statusCode)
         }
         return try JSONDecoder().decode(IngestResult.self, from: data)
+    }
+
+    public func delete(baseURL: URL, historyId: String) async throws {
+        try await deletePath(baseURL: baseURL, path: "api/history/\(historyId)")
+    }
+
+    public func dismissJob(baseURL: URL, jobId: String) async throws {
+        try await deletePath(baseURL: baseURL, path: "api/jobs/\(jobId)")
+    }
+
+    /// Shared DELETE helper: percent-encode the id segment, apply the auth
+    /// header, and surface a non-2xx as a `badStatus`.
+    private func deletePath(baseURL: URL, path: String) async throws {
+        let url = baseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = timeout
+        AuthContext.shared.apply(to: &request)
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            throw LibrarySearchError.badStatus(http.statusCode)
+        }
     }
 }

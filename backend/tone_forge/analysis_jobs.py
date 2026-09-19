@@ -309,6 +309,25 @@ class JobRegistry:
                     self._persist(job)
             self._jobs[job.id] = job
 
+    def remove(self, job_id: str) -> bool:
+        """Drop a single job from memory + disk, whatever its status.
+
+        This is the Songs-page "Dismiss" on an error row: the row is a
+        FAILED engine job surfaced in the unified table, and until now
+        "Dismiss" only dropped the client-side queue card, so the next
+        /api/jobs poll re-surfaced the job and the row came back. Removing
+        the backing job here makes the row actually go away.
+
+        Mirrors ``sweep``'s teardown for one id (dict + condition + file),
+        but is status-agnostic on purpose: dismiss is an explicit user
+        action on a terminal row, not the TTL sweep's terminal-only rule.
+        Returns whether a job was present (missing id → no-op, idempotent).
+        """
+        existed = self._jobs.pop(job_id, None) is not None
+        self._conds.pop(job_id, None)
+        (self._dir / f"{job_id}.json").unlink(missing_ok=True)
+        return existed
+
     def sweep(self) -> int:
         """Drop terminal jobs older than the TTL from memory and disk.
 

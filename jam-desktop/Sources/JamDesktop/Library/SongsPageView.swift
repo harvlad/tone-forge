@@ -241,6 +241,10 @@ struct SongsPageView: View {
                     .fill(active ? JamTheme.accent.opacity(0.22) : .clear)
             )
             .foregroundStyle(active ? Color.white : JamTheme.textPrimary)
+            // The WHOLE row is the tap target — an inactive chip's fill is
+            // .clear, and SwiftUI won't hit-test transparent areas without
+            // an explicit content shape, so clicks only landed on the text.
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -318,6 +322,9 @@ struct SongsPageView: View {
                     .fill(active ? JamTheme.accent.opacity(0.22) : .clear)
             )
             .foregroundStyle(active ? Color.white : JamTheme.textPrimary)
+            // Full-row tap target — see statusChip: a .clear fill isn't
+            // hit-tested without an explicit content shape.
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -411,11 +418,29 @@ struct SongsPageView: View {
     private func actionCell(_ track: SourceTrack) -> some View {
         switch track.status {
         case .done, .unknown:
-            Button("Open") { open(track) }
-                .buttonStyle(.borderedProminent)
-                .tint(JamTheme.accent)
-                .controlSize(.small)
-                .disabled(model.isLoadingSession || (track.historyId == nil && track.sourceRef.isEmpty))
+            HStack(spacing: 6) {
+                Button("Open") { open(track) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(JamTheme.accent)
+                    .controlSize(.small)
+                    .disabled(model.isLoadingSession || (track.historyId == nil && track.sourceRef.isEmpty))
+
+                // Remove from Library — purges the analysis server-side.
+                // Also how a user clears pre-dedupe duplicate rows.
+                Menu {
+                    Button(role: .destructive) {
+                        remove(track)
+                    } label: {
+                        Label("Remove from Library", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Remove from Library")
+            }
 
         case .running:
             HStack(spacing: 6) {
@@ -516,13 +541,28 @@ struct SongsPageView: View {
         }
     }
 
-    /// Dismiss an errored row: if it's a live queue item, drop it from the
-    /// queue (which also persists the dismissal); then refresh.
+    /// Dismiss an errored row. An error row is a FAILED engine JOB from
+    /// the server union (sourceRef = job id), not a history entry — so
+    /// dropping the local queue card alone let the next reload re-surface
+    /// it (the "Dismiss does nothing" bug). Delete the backing job so the
+    /// row actually goes away, and also drop any matching live card.
     private func dismiss(_ track: SourceTrack) {
         if let item = queue.items.first(where: { SongsModel.liveKey($0) == track.mergeKey }) {
             queue.dismiss(id: item.id)
         }
-        Task { await songs.reload(baseURL: model.backendBaseURL) }
+        Task {
+            await songs.dismissJob(baseURL: model.backendBaseURL, track: track)
+            await songs.reload(baseURL: model.backendBaseURL)
+        }
+    }
+
+    /// Remove a finished song from the library (purges it server-side),
+    /// then refresh to reconcile with the server.
+    private func remove(_ track: SourceTrack) {
+        Task {
+            await songs.remove(baseURL: model.backendBaseURL, track: track)
+            await songs.reload(baseURL: model.backendBaseURL)
+        }
     }
 
     // MARK: - Helpers

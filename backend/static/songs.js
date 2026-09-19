@@ -395,9 +395,42 @@
     }).catch(function () {}).then(function () { reload(); });
   }
 
+  // Dismiss an ERROR row. Such a row is a FAILED engine JOB from the
+  // server union (source_ref = job id, no history_id), not a live client
+  // card — so dropping the local card alone let the next poll re-fetch it
+  // and the row came back (the "Dismiss does nothing" bug). Delete the
+  // backing job so it's gone, then reload. Also drop any matching live
+  // card (a client-only error card) via the router handler.
   function dismissTrack(track) {
     try { handlers.onDismiss(track); } catch (_) {}
-    reload();
+    var key = mergeKey(track);
+    // Optimistic: remove the row immediately for instant feedback.
+    st.serverTracks = st.serverTracks.filter(function (t) { return mergeKey(t) !== key; });
+    renderAll();
+    var jobId = (!track.history_id && track.source_ref) ? track.source_ref : '';
+    if (jobId) {
+      fetch('/api/jobs/' + encodeURIComponent(jobId), {
+        method: 'DELETE', headers: authHeaders(),
+      }).catch(function () {}).then(function () { reload(); });
+    } else {
+      reload();
+    }
+  }
+
+  // Remove a finished song from the library: purge it server-side (stems,
+  // R2 objects, graph) via DELETE /api/history/{id}, drop the row
+  // optimistically, then reconcile with a reload. This is also how a user
+  // clears pre-dedupe duplicate rows.
+  function removeTrack(track) {
+    var id = track.history_id || (track.source_ref || '');
+    if (!id) return;
+    var key = mergeKey(track);
+    st.serverTracks = st.serverTracks.filter(function (t) { return mergeKey(t) !== key; });
+    if (st.total != null && st.total > 0) st.total -= 1;
+    renderAll();
+    fetch('/api/history/' + encodeURIComponent(id), {
+      method: 'DELETE', headers: authHeaders(),
+    }).catch(function () {}).then(function () { reload(); });
   }
 
   // ---- rendering ------------------------------------------------------
@@ -700,6 +733,14 @@
       open.disabled = !(track.history_id || track.source_ref);
       open.addEventListener('click', function () { openTrack(track); });
       cell.appendChild(open);
+      // Remove from library — purges the analysis server-side. Also the
+      // way to clear pre-dedupe duplicate rows.
+      var remove = el('button', 'songs-btn songs-btn--ghost songs-btn--sm', 'Remove');
+      remove.type = 'button';
+      remove.title = 'Remove from Library';
+      remove.disabled = !(track.history_id || track.source_ref);
+      remove.addEventListener('click', function () { removeTrack(track); });
+      cell.appendChild(remove);
     }
     return cell;
   }

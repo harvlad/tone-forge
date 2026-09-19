@@ -2475,6 +2475,38 @@ async def list_jobs_endpoint(
     return JSONResponse({"jobs": rows})
 
 
+@app.delete("/api/jobs/{job_id}")
+async def dismiss_job_endpoint(job_id: str, request: Request) -> JSONResponse:
+    """Dismiss (remove) a job row — the Songs-page error-row "Dismiss".
+
+    Error rows in the unified Songs table are FAILED engine jobs surfaced
+    from /api/jobs, NOT history entries and NOT (only) live client-queue
+    cards. The old Dismiss just dropped the local card, so the failed job
+    was re-fetched on the next poll and the row reappeared. This deletes
+    the backing job so the row actually goes away.
+
+    Owner-gated exactly like the /api/jobs listing: the caller must own the
+    job (device-id header or signed-in account). A missing/already-gone job
+    is an idempotent success (nothing to leak). TESTING PHASE ONLY
+    (TONEFORGE_SHARED_LIBRARY=1) lets an UNSIGNED tester dismiss any job in
+    the shared test library — same cross-show gate as delete/read, same
+    reason. MUST be unset before public launch: at launch (flag off) the
+    owner gate is fully restored so one tester can't dismiss another's jobs.
+    """
+    device_id, owner_id = await _request_ownership(request)
+    job = _JOBS.get(job_id)
+    if job is None:
+        return JSONResponse({"status": "dismissed"})  # already gone → idempotent
+    owns = (
+        (device_id is not None and job.device_id == device_id)
+        or (owner_id is not None and job.owner_id == owner_id)
+    )
+    if not owns and not _shared_library_enabled():
+        raise HTTPException(status_code=403, detail="Not your job")
+    _JOBS.remove(job_id)
+    return JSONResponse({"status": "dismissed"})
+
+
 @app.post("/api/register-device")
 async def register_device_endpoint(
     job_id: str = Form(...),
@@ -5333,7 +5365,18 @@ async def delete_history_entry(entry_id: str, request: Request) -> JSONResponse:
         history = _load_history()
         target = next((e for e in history if e.get("id") == entry_id), None)
         if target is not None and not _caller_owns(target, device_id, user_id):
-            raise HTTPException(status_code=403, detail="Not your analysis")
+            # TESTING PHASE ONLY (TONEFORGE_SHARED_LIBRARY=1): an unsigned
+            # tester (the desktop app with no account) owns NONE of the
+            # shared test songs — they're stamped to other device ids — so
+            # the owner gate would 403 every "Remove from Library". While
+            # the flag is set, allow the delete so a tester can clean up the
+            # shared test library (duplicate BANKS rows, dead uploads).
+            # Gated EXACTLY like the read cross-show (_library_scoped_history
+            # / _shared_library_enabled), and for the same reason. MUST be
+            # unset before public launch: at launch (flag off) the owner gate
+            # is fully restored so one tester can't wipe another's analyses.
+            if not _shared_library_enabled():
+                raise HTTPException(status_code=403, detail="Not your analysis")
         history = [e for e in history if e.get("id") != entry_id]
         _save_history(history)
     if target:

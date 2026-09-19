@@ -141,6 +141,36 @@ public final class SongsModel: ObservableObject {
         }
     }
 
+    /// Remove a finished song from the library. Optimistically drops the
+    /// row (instant feedback), then purges it server-side. Returns whether
+    /// the delete succeeded so the caller can surface a failure.
+    @discardableResult
+    public func remove(baseURL: URL, track: SourceTrack) async -> Bool {
+        guard let id = track.historyId
+            ?? (track.sourceRef.isEmpty ? nil : track.sourceRef) else { return false }
+        let key = track.mergeKey
+        serverTracks.removeAll { $0.mergeKey == key }
+        if let t = total, t > 0 { total = t - 1 }
+        do {
+            try await client.delete(baseURL: baseURL, historyId: id)
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Dismiss a failed-analysis error row. Such a row is a failed engine
+    /// JOB (sourceRef = job id, no historyId), not a history entry, so we
+    /// delete the backing job — otherwise the next reload re-surfaces it.
+    /// Optimistically drops the row first.
+    public func dismissJob(baseURL: URL, track: SourceTrack) async {
+        let key = track.mergeKey
+        serverTracks.removeAll { $0.mergeKey == key }
+        guard track.historyId == nil, !track.sourceRef.isEmpty else { return }
+        try? await client.dismissJob(baseURL: baseURL, jobId: track.sourceRef)
+    }
+
     // MARK: - Filter mutations (each is a fresh first page)
 
     public func setStatusFilter(_ status: String?, baseURL: URL) {

@@ -120,6 +120,45 @@ def _project_song_meta(entry: dict) -> Tuple[Optional[str], Optional[str], Tuple
     return genre, mood, tags
 
 
+def _project_key_tempo(entry: dict) -> Tuple[Optional[str], Optional[float]]:
+    """Best-effort ``(key, tempo_bpm)`` for a history entry.
+
+    THE bug this fixes: a deep-analysis history entry stores the detected
+    key/tempo INSIDE its ``result`` blob (``result.detected_key`` /
+    ``result.tempo_bpm``), NOT at the entry top level. The top-level
+    ``detected_key``/``tempo_bpm`` names only ever exist on the slimmed
+    ``/api/history`` LIST rows (see ``_HISTORY_LIST_FIELDS`` in
+    ``tone_forge_api``) — never on the full entries the Songs-page
+    composition point (``_library_scoped_history``) hands us. Reading only
+    the top level meant EVERY analyzed row projected ``key=None`` /
+    ``tempo_bpm=None``, so the Key/Tempo columns were blank and
+    ``_compute_facets`` emitted no key bucket (facets collapsed to
+    ``{"status": ...}`` alone — the exact prod symptom).
+
+    Top level is still checked first so a future writer that surfaces the
+    scalars onto the entry keeps working; then we dip into ``result``.
+    ``result`` is already resident on the loaded entry, so this stays a
+    scalar pull — no extra I/O, list rows stay light. ``key`` also honours
+    the legacy ``key`` alias; ``tempo`` honours ``tempo``.
+    """
+    result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
+    key = (
+        _clean_str(entry.get("detected_key"))
+        or _clean_str(entry.get("key"))
+        or _clean_str(result.get("detected_key"))
+        or _clean_str(result.get("key"))
+    )
+    # A 0.0 tempo is "unknown", not a real value — the ``or`` chain skips it
+    # (falsy) and falls through, ending at None if nothing meaningful exists.
+    tempo = (
+        _coerce_float(entry.get("tempo_bpm"))
+        or _coerce_float(entry.get("tempo"))
+        or _coerce_float(result.get("tempo_bpm"))
+        or _coerce_float(result.get("tempo"))
+    )
+    return key, tempo
+
+
 class LibrarySource:
     """MusicSource over the caller's own history + jobs.
 
@@ -144,14 +183,15 @@ class LibrarySource:
 
     def _track_from_history(self, entry: dict) -> SourceTrack:
         genre, mood, tags = _project_song_meta(entry)
+        key, tempo_bpm = _project_key_tempo(entry)
         hid = _clean_str(entry.get("id"))
         return SourceTrack(
             source=SourceId.LIBRARY,
             source_ref=hid or "",
             title=_clean_str(entry.get("name")) or _clean_str(entry.get("filename")) or "Untitled",
             artist=_clean_str(entry.get("artist")),
-            key=_clean_str(entry.get("detected_key")),
-            tempo_bpm=_coerce_float(entry.get("tempo_bpm")),
+            key=key,
+            tempo_bpm=tempo_bpm,
             duration_s=_coerce_float(entry.get("duration")),
             genre=genre,
             mood=mood,

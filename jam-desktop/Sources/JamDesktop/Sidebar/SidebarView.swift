@@ -3,6 +3,7 @@
 // Left navigation sidebar matching the web jamn.app theme:
 // logo + branding, contribute mode buttons, recent songs list.
 
+import AppKit
 import SwiftUI
 import JamDesktopCore
 import ToneForgeEngine
@@ -170,6 +171,24 @@ private struct SidebarLogo: View {
     private let bars: [CGFloat] = [0.5, 0.8, 1.0, 0.7, 0.5]
 
     var body: some View {
+        // Prefer the real bundled app icon (AppIcon.icns, surfaced via
+        // NSApp.applicationIconImage) so the sidebar wordmark carries the
+        // actual Jamn logo next to it, not just the abstract mark. Falls
+        // back to the drawn gradient bars when the icon image isn't
+        // available (SwiftUI previews / a headless run before the icon is
+        // set) so the header never renders empty.
+        if let icon = NSApplication.shared.applicationIconImage {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            drawnMark
+        }
+    }
+
+    private var drawnMark: some View {
         GeometryReader { geo in
             let h = geo.size.height
             let barWidth = geo.size.width * 0.12
