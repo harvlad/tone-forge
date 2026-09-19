@@ -1,0 +1,200 @@
+/* songs.css — the full-screen Songs page (songs.js).
+ *
+ * Layout mirrors the desktop SongsPageView: a top bar (title + total +
+ * sort, then source tabs + search), a left facet rail, and a virtualized
+ * table whose rows are absolutely positioned inside a fixed-height
+ * viewport so only the on-screen slice is ever in the DOM. Uses the shared
+ * --jamn-* tokens (jam.css) so it themes with the rest of the app. */
+
+#view-songs.view.active { display: flex; }
+.songs-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: calc(100vh - 120px);
+  min-height: 480px;
+  color: var(--jamn-text, #fff);
+}
+
+/* ---- top bar ---- */
+.songs-topbar {
+  padding: 18px 24px 12px;
+  border-bottom: 1px solid var(--jamn-border, #2A2A36);
+  flex: 0 0 auto;
+}
+.songs-title-row { display: flex; align-items: baseline; gap: 12px; }
+.songs-title { font-size: 1.7rem; font-weight: 800; margin: 0; }
+.songs-total { font-variant-numeric: tabular-nums; color: var(--jamn-text2, #A1A1AA); font-size: 1rem; }
+.songs-spacer { flex: 1 1 auto; }
+.songs-sort { display: inline-flex; align-items: center; gap: 6px; }
+.songs-sort-label { font-size: .8rem; color: var(--jamn-text2, #A1A1AA); }
+.songs-sort-select {
+  background: var(--jamn-surface1, #14141A);
+  color: var(--jamn-text, #fff);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-sm, 8px);
+  padding: 5px 8px; font-size: .85rem;
+}
+
+.songs-tabs-row { display: flex; align-items: center; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+.songs-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.songs-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--jamn-text2, #A1A1AA);
+  padding: 6px 12px; border-radius: var(--jamn-radius-sm, 8px);
+  font: inherit; font-size: .9rem;
+}
+.songs-tab.is-active {
+  background: color-mix(in srgb, var(--jamn-accent, #8B5CF6) 22%, transparent);
+  color: #fff; font-weight: 600;
+}
+.songs-tab:disabled { cursor: default; color: rgba(255,255,255,.32); }
+.songs-tab-soon {
+  font-size: .62rem; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 5px; border-radius: 999px; background: rgba(255,255,255,.08);
+}
+.songs-search {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: var(--jamn-radius-sm, 8px);
+  padding: 6px 10px;
+}
+.songs-search-icon { opacity: .6; font-size: .85rem; }
+.songs-search-input {
+  background: transparent; border: 0; outline: none; color: var(--jamn-text, #fff);
+  font: inherit; font-size: .9rem; width: 220px;
+}
+.songs-search-input::placeholder { color: var(--jamn-text2, #A1A1AA); }
+
+/* ---- body: rail + main ---- */
+.songs-body { display: flex; flex: 1 1 auto; min-height: 0; }
+
+.songs-rail {
+  flex: 0 0 224px; width: 224px;
+  border-right: 1px solid var(--jamn-border, #2A2A36);
+  padding: 16px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.songs-facet { display: flex; flex-direction: column; gap: 7px; }
+.songs-facet-head {
+  font-size: .68rem; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--jamn-text2, #A1A1AA);
+}
+.songs-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: transparent; border: 0; cursor: pointer; text-align: left;
+  color: var(--jamn-text, #fff); font: inherit; font-size: .88rem;
+  padding: 6px 10px; border-radius: 7px; width: 100%;
+}
+.songs-chip:hover { background: rgba(255,255,255,.05); }
+.songs-chip.is-active {
+  background: color-mix(in srgb, var(--jamn-accent, #8B5CF6) 22%, transparent);
+  font-weight: 600;
+}
+.songs-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.songs-chip-count { font-variant-numeric: tabular-nums; color: var(--jamn-text2, #A1A1AA); font-size: .78rem; }
+.songs-tempo { display: flex; align-items: center; gap: 6px; }
+.songs-tempo-input {
+  width: 60px; background: var(--jamn-surface1, #14141A);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 6px; color: var(--jamn-text, #fff); font: inherit;
+  padding: 5px 8px; font-size: .85rem;
+}
+.songs-tempo-dash { color: var(--jamn-text2, #A1A1AA); }
+.songs-clear {
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--jamn-accent, #8B5CF6); font: inherit; font-size: .82rem;
+  padding: 4px 0; text-align: left;
+}
+
+/* ---- main: table ---- */
+.songs-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.songs-thead {
+  display: grid; align-items: center;
+  padding: 0 16px; height: 38px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--jamn-border, #2A2A36);
+  background: var(--jamn-bg, #0B0B0F);
+}
+.songs-th {
+  font-size: .68rem; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--jamn-text2, #A1A1AA);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.songs-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; }
+.songs-vport { position: relative; width: 100%; }
+
+.songs-row {
+  position: absolute; left: 0; right: 0;
+  display: grid; align-items: center; gap: 0;
+  padding: 0 16px; box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in srgb, var(--jamn-border, #2A2A36) 60%, transparent);
+}
+.songs-row:hover { background: rgba(255,255,255,.03); }
+.songs-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
+.songs-dim { color: var(--jamn-text2, #A1A1AA); }
+.songs-num { font-variant-numeric: tabular-nums; }
+.songs-cell-title { display: flex; align-items: center; gap: 10px; }
+.songs-cell-title .jamn-art { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 7px; }
+.songs-title-text { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.songs-cell-action { display: flex; align-items: center; gap: 8px; padding-right: 0; }
+
+/* ---- status badge ---- */
+.songs-badge { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; }
+.songs-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.songs-badge--done { color: var(--jamn-success, #22C55E); }
+.songs-badge--running { color: var(--jamn-accent, #8B5CF6); }
+.songs-badge--queued { color: #F59E0B; }
+.songs-badge--error { color: var(--jamn-danger, #EF4444); }
+
+/* ---- buttons ---- */
+.songs-btn {
+  background: var(--jamn-surface2, #1C1C24); color: var(--jamn-text, #fff);
+  border: 1px solid var(--jamn-border, #2A2A36);
+  border-radius: 7px; cursor: pointer; font: inherit; font-size: .82rem;
+  padding: 5px 11px;
+}
+.songs-btn:hover { border-color: var(--jamn-accent, #8B5CF6); }
+.songs-btn--sm { padding: 4px 10px; }
+.songs-btn--primary { background: var(--jamn-accent, #8B5CF6); border-color: transparent; color: #fff; font-weight: 600; }
+.songs-btn--primary:disabled { opacity: .45; cursor: default; }
+.songs-btn--ghost { background: transparent; }
+.songs-action-progress { display: inline-flex; align-items: center; gap: 6px; color: var(--jamn-text2, #A1A1AA); }
+.songs-pct { font-variant-numeric: tabular-nums; font-size: .8rem; }
+.songs-spinner {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.25); border-top-color: var(--jamn-accent, #8B5CF6);
+  display: inline-block; animation: songs-spin .8s linear infinite;
+}
+@keyframes songs-spin { to { transform: rotate(360deg); } }
+
+/* ---- footer + empty/loading overlay ---- */
+.songs-footer {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-top: 1px solid var(--jamn-border, #2A2A36);
+  min-height: 20px;
+}
+.songs-error { color: var(--jamn-danger, #EF4444); font-size: .82rem; }
+.songs-state { display: none; }
+.songs-state.is-shown {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  position: absolute; inset: 38px 0 42px 0; pointer-events: none;
+  color: var(--jamn-text2, #A1A1AA);
+}
+.songs-state-title { font-size: 1.1rem; font-weight: 700; color: var(--jamn-text, #fff); }
+.songs-state-sub, .songs-state-msg { font-size: .9rem; }
+
+@media (max-width: 760px) {
+  .songs-rail { display: none; }
+  .songs-search-input { width: 140px; }
+}
+
+/* Sidebar "Recent songs" header row + "View all" shortcut into this page
+ * (the sidebar keeps a short recent list; Songs is the full destination). */
+.jamn-side-label--row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.jamn-side-viewall {
+  background: transparent; border: 0; cursor: pointer; padding: 0;
+  color: var(--jamn-accent, #8B5CF6); font: inherit; font-size: .78rem; font-weight: 600;
+}
+.jamn-side-viewall:hover { text-decoration: underline; }

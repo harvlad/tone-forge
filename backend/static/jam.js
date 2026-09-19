@@ -2649,7 +2649,14 @@
   // Completion NEVER auto-navigates — the finished card exposes an
   // explicit "Start Jamming" button (parity with the native apps).
   function enterBandRoom(desc) {
-    showView('bandroom');           // wrapper calls BandRoomQueue.enter()
+    // Band Room is no longer a destination: land on the Songs page
+    // filtered to "processing" (the analysis queue is now that filter +
+    // the Status column). The just-started job is still enqueued into
+    // BandRoomQueue below — its per-job SSE follower drives the live
+    // overlay + the onJobCompleted collapse — but the user watches it as a
+    // row on the unified table, not a separate card stack.
+    showView('songs');
+    try { window.JamnSongs && window.JamnSongs.setStatusFilter('processing'); } catch (_) {}
     if (desc && desc.jobId) {
       state.pendingJobId = null;    // consumed — the queue owns it now
       BandRoomQueue.addJob(desc.jobId, desc.title || 'Analysis', desc.message || '');
@@ -2991,9 +2998,25 @@
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
+    // Normalized live-queue snapshot for the Songs page overlay (the web
+    // twin of the desktop's `songs.liveItems = queue.items`). Newest-first
+    // (from _visibleCards). Keyed like SourceTrack so JamnSongs.mergeLive
+    // can collapse an active card onto its server row or prepend a brand-
+    // new upload before the server union has caught up.
+    function snapshot() {
+      return _visibleCards().map(c => ({
+        id: c.id,
+        jobId: c.kind === 'job' ? c.id : null,
+        title: c.title || 'Analysis',
+        status: c.status || 'queued',
+        percent: (typeof c.percent === 'number') ? c.percent : null,
+        historyId: c.historyId || null,
+      }));
+    }
+
     return {
       addJob, addLocalSse, refresh, render, dismiss, clearFinished,
-      enter, leave,
+      enter, leave, snapshot,
       set onJobCompleted(fn) { onDone = fn; },
     };
   })();
@@ -15938,7 +15961,13 @@
   (function initJamnRouter() {
     const SURFACE_TO_VIEW = {
       intake: 'intake',
-      bandroom: 'bandroom',
+      // Songs = the unified full-screen library table (songs.js). The old
+      // "Band Room" surface stops being a destination: its #bandroom hash
+      // now lands on Songs filtered to processing (the router preselects
+      // that filter when the origin is bandroom), so legacy deep links and
+      // the upload flow still reach the in-progress queue — as a filter.
+      songs: 'songs',
+      bandroom: 'songs',
       rehearsal: 'rehearsal',
       // Perform = the PADS (merged Launchpad, kit.js). The pads are the
       // primary play surface; the guitar fretboard moved to its own
@@ -15956,6 +15985,7 @@
     };
     const VIEW_TO_SURFACE = {
       intake: 'intake',
+      songs: 'songs',
       bandroom: 'bandroom',
       rehearsal: 'rehearsal',
       // Pads light the Perform pill (Perform = pads now). The fretboard
@@ -15979,6 +16009,7 @@
     views.kit = $('view-kit');
     views.mixer = $('view-mixer');
     views.library = $('view-library');
+    views.songs = $('view-songs');
     views.stage = $('view-stage');
     views.sequencer = $('view-sequencer');
     views.recordings = $('view-recordings');
@@ -16584,6 +16615,11 @@
         try { window.Launchpad?.repaint?.(); } catch (_) {}
       }
       if (name === 'library') _renderLibrary();
+      // Songs page: mount-once + start its live poll while on-screen; stop
+      // the poll when leaving (per-job SSE followers keep running so a
+      // song still finishes in the background).
+      if (name === 'songs') { try { window.JamnSongs && window.JamnSongs.enter(); } catch (_) {} }
+      else { try { window.JamnSongs && window.JamnSongs.leave(); } catch (_) {} }
       if (name === 'stage') _mountStage();
       if (name === 'sequencer') _mountSequencer();
       if (name === 'recordings') _mountRecordings();
@@ -16596,9 +16632,40 @@
     };
 
     // A finished analysis = a new song in server history. Refresh the
-    // Recent-songs / Library lists so it appears without a reload (parity
-    // with the desktop AnalysisQueueModel.onJobCompleted hook).
-    BandRoomQueue.onJobCompleted = () => { try { _renderLibrary(); } catch (_) {} };
+    // Recent-songs / Library lists AND the Songs page so it appears
+    // without a reload (parity with the desktop AnalysisQueueModel
+    // .onJobCompleted hook, which pulls the new history row so the
+    // processing row COLLAPSES into it).
+    BandRoomQueue.onJobCompleted = () => {
+      try { _renderLibrary(); } catch (_) {}
+      try { window.JamnSongs && window.JamnSongs.refresh(); } catch (_) {}
+    };
+
+    // ---------------------------------------------- Songs page wiring
+    // Keep the module DOM/engine-agnostic: the router hands it the live
+    // analysis queue (for the instant-upload overlay + fresher SSE
+    // percent), the deep-open path (unchanged /api/history/{id} → pads),
+    // and the errored-row dismissal (drop the live card).
+    if (window.JamnSongs) {
+      // The live overlay: BandRoomQueue is the web's AnalysisQueueModel.
+      window.JamnSongs.setLiveProvider(() => {
+        try { return BandRoomQueue.snapshot(); } catch (_) { return []; }
+      });
+      // Deep-open a finished analysis — same path as a library-row tap and
+      // the /jam/:id deep link (loadSessionById → hydrate → land on pads).
+      window.JamnSongs.onOpen = (historyId, title) => {
+        _userActed = true;
+        loadSessionById(historyId, null, title).then(ok => {
+          if (ok) _hydrateAndLand(historyId, true);
+        });
+      };
+      // Dismiss an errored row: if it maps to a live queue card, drop it
+      // (BandRoomQueue persists the dismissal so it can't haunt reloads).
+      window.JamnSongs.onDismiss = (track) => {
+        const key = (track && (track.history_id || track.source_ref)) || '';
+        if (key) { try { BandRoomQueue.dismiss(key); } catch (_) {} }
+      };
+    }
 
     // Band Room queue chrome (header + empty-state actions).
     const _brClear = document.getElementById('bandroom-clear');
@@ -16607,15 +16674,25 @@
     if (_brBack) _brBack.addEventListener('click', () => showView('intake'));
 
     // ---------------------------------------------- pill nav + hash
+    // Arriving via the legacy `bandroom` surface preselects the Songs
+    // page's "Processing" filter — Band Room is now that filter, not a
+    // separate pane. Other origins clear it so Songs opens on all rows.
+    function _routeSurface(surface) {
+      const view = SURFACE_TO_VIEW[surface];
+      if (!view) return;
+      if (view === 'songs') {
+        try { window.JamnSongs && window.JamnSongs.setStatusFilter(surface === 'bandroom' ? 'processing' : null); } catch (_) {}
+      }
+      showView(view);
+    }
     pills.forEach(p => p.addEventListener('click', () => {
       _userActed = true;
-      const view = SURFACE_TO_VIEW[p.dataset.surface];
-      if (view) showView(view);
+      _routeSurface(p.dataset.surface);
     }));
 
     window.addEventListener('hashchange', () => {
-      const view = SURFACE_TO_VIEW[(window.location.hash || '').replace(/^#/, '')];
-      if (view) { _userActed = true; showView(view); }
+      const surface = (window.location.hash || '').replace(/^#/, '');
+      if (SURFACE_TO_VIEW[surface]) { _userActed = true; _routeSurface(surface); }
     });
 
     // ---------------------------------------------- sidebar
@@ -16672,6 +16749,9 @@
     [$('jamn-lib-add'), $('jamn-side-lib-add')].forEach(btn => {
       if (btn) btn.addEventListener('click', () => showView('intake'));
     });
+    // "View all songs" — the sidebar shortcut into the full Songs page.
+    const _viewAll = $('jamn-side-lib-viewall');
+    if (_viewAll) _viewAll.addEventListener('click', () => { _userActed = true; _routeSurface('songs'); });
 
     function _libDate(ts) {
       if (ts == null) return '';
