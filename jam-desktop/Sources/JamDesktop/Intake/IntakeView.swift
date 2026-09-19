@@ -126,7 +126,7 @@ struct IntakeView: View {
                         trackId: track.id,
                         title: track.title
                     )
-                    model.view = .bandRoom
+                    model.view = .songs
                 }
             }
         }
@@ -165,7 +165,7 @@ struct IntakeView: View {
         guard !trimmed.isEmpty else { return }
         queue.enqueueURL(baseURL: model.backendBaseURL, sourceUrl: trimmed)
         sourceUrl = ""
-        model.view = .bandRoom
+        model.view = .songs
     }
 
     private func startUpload(_ fileURL: URL) {
@@ -175,7 +175,7 @@ struct IntakeView: View {
             filename: fileURL.lastPathComponent,
             attested: intake.attested
         )
-        model.view = .bandRoom
+        model.view = .songs
     }
 
 }

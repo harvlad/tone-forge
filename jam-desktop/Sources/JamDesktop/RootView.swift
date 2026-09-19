@@ -16,6 +16,7 @@ struct RootView: View {
     @StateObject private var history = HistoryModel()
     @StateObject private var queue = AnalysisQueueModel()
     @StateObject private var studio = StudioModel()
+    @StateObject private var songs = SongsModel()
     @State private var showLaunchpad = false
     @State private var showRecordings = false
     @State private var showPacks = false
@@ -44,7 +45,7 @@ struct RootView: View {
                     onRecordingsTap: { showRecordings = true },
                     onPacksTap: { showPacks = true },
                     onProjectsTap: { showProjects = true },
-                    onViewAllSongs: { model.view = .bandRoom }
+                    onViewAllSongs: { model.view = .songs }
                 )
                 .environmentObject(history)
                 .environmentObject(model)
@@ -130,6 +131,7 @@ struct RootView: View {
         .environmentObject(history)
         .environmentObject(queue)
         .environmentObject(studio)
+        .environmentObject(songs)
         .environmentObject(session)
         .onChange(of: model.view, initial: true) { _, newValue in
             selectedView = newValue
@@ -142,7 +144,10 @@ struct RootView: View {
             ToolbarItem(placement: .automatic) {
                 if queue.activeCount > 0 {
                     Button {
-                        model.view = .bandRoom
+                        // Band Room is gone — the in-flight analyses now
+                        // live on the Songs page, pre-filtered to Processing.
+                        songs.setStatusFilter("processing", baseURL: model.backendBaseURL)
+                        model.view = .songs
                     } label: {
                         HStack(spacing: 6) {
                             ProgressView()
@@ -151,7 +156,7 @@ struct RootView: View {
                                 .font(.caption.monospacedDigit())
                         }
                     }
-                    .help("Analyses in progress — open the Band Room")
+                    .help("Analyses in progress — open Songs (Processing)")
                 }
             }
             ToolbarItem(placement: .automatic) {
@@ -334,6 +339,9 @@ struct RootView: View {
             // manual search/relaunch.
             queue.onJobCompleted = {
                 Task { await history.refresh(baseURL: model.backendBaseURL) }
+                // Collapse the finished job's processing row into its new
+                // history row on an open Songs page (SongsPageView listens).
+                NotificationCenter.default.post(name: .songsShouldRefresh, object: nil)
             }
             // Featured songs stay pinned in Recent Songs but never
             // auto-load — opening a song uninvited read as broken.
@@ -357,7 +365,10 @@ struct RootView: View {
         switch model.view {
         case .intake:
             IntakeView()
+        case .songs:
+            SongsPageView()
         case .bandRoom:
+            // Superseded by .songs; retained as a fallback surface.
             BandRoomView()
         case .rehearsal:
             RehearsalView()
@@ -411,7 +422,7 @@ struct RootView: View {
         ToolbarItem(placement: .principal) {
             Picker("View", selection: $selectedView) {
                 Text("Intake").tag(JamView.intake)
-                Text("Band Room").tag(JamView.bandRoom)
+                Text("Songs").tag(JamView.songs)
                 Text("Rehearsal").tag(JamView.rehearsal)
                 Text("Perform").tag(JamView.perform)
                 Text("Guitar").tag(JamView.guitar)
