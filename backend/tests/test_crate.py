@@ -726,3 +726,83 @@ def test_api_crate_borrow_unknown_track_404(monkeypatch):
     creg.invalidate_cache()
     r = _client.get("/api/crate/crate:nope:9/borrow")
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Extraction-quality contract — HARD RULE (never compromise on extraction)
+#
+# The crate is ingested ONCE and matched/borrowed from forever, so the ingest
+# must extract every matchable musical signal to its fullest potential — there
+# must never be a reason to re-analyse a crate track because we under-extracted
+# it. These tests PIN PipelineConfig.crate so a future "speed optimisation"
+# that silently drops melody, stems, or downgrades the MIDI path to the slow
+# ensemble (or the wrong direction) fails CI instead of shipping a degraded
+# crate. See unified_pipeline.PipelineConfig.crate + tone_forge/crate/README.md.
+# ---------------------------------------------------------------------------
+
+class TestCrateExtractionQuality:
+    def _cfg(self):
+        from tone_forge.unified_pipeline import PipelineConfig
+        return PipelineConfig.crate()
+
+    def test_stems_are_extracted(self):
+        # Best-VERSION curated kit + borrow loops are built from stems; the
+        # admit gate requires the kit builder to yield a surviving pad, so
+        # stems are non-negotiable.
+        cfg = self._cfg()
+        assert cfg.separate_stems is True
+        assert cfg.force_stem_separation is True
+
+    def test_melody_is_extracted(self):
+        # extract_midi feeds the crate/match.py melody term. Dropping it (the
+        # v1 mistake) silently amputates melody matching and forces a re-ingest.
+        assert self._cfg().extract_midi is True
+
+    def test_melody_at_max_fidelity_not_downgraded_for_speed(self):
+        # Melody is captured at MAX fidelity (the full ensemble), NOT downgraded
+        # to basic-pitch-only for speed. The ensemble being CPU-bound on a pod
+        # is a LOGISTICS problem (watchdog/pods/GPU-accel), never a reason to
+        # cut fidelity — the whole point of the hard rule.
+        assert self._cfg().use_ensemble is True
+
+    def test_captures_every_metric(self):
+        # "Capture all data points once per run": separation-quality metrics,
+        # synth timbre, provenance, and waveform are all stored so they can
+        # assist matching / ranking later WITHOUT a re-ingest.
+        cfg = self._cfg()
+        assert cfg.analyze_quality is True
+        assert cfg.detect_synth_behavior is True
+        assert cfg.include_provenance is True
+        assert cfg.include_waveform is True
+
+    def test_no_extraction_signal_dropped_vs_deep(self):
+        # The strongest pin: the crate must capture EVERYTHING deep() does for
+        # every analysis-signal flag. A future "crate optimisation" that turns
+        # any of these off (the v1/v2 mistakes) fails here.
+        from tone_forge.unified_pipeline import PipelineConfig
+        crate, deep = PipelineConfig.crate(), PipelineConfig.deep()
+        for flag in (
+            "separate_stems", "force_stem_separation", "extract_midi",
+            "use_ensemble", "analyze_quality", "detect_synth_behavior",
+            "include_provenance", "include_waveform",
+        ):
+            assert getattr(crate, flag) == getattr(deep, flag) is True, (
+                f"crate dropped {flag} that deep() captures — extraction "
+                f"quality compromised")
+
+    def test_deep_mode_full_analysis(self):
+        from tone_forge.unified_pipeline import AnalysisMode
+        assert self._cfg().mode == AnalysisMode.DEEP
+
+    def test_admit_gate_runs_the_same_best_version_kit_builder(self):
+        # The pad-quality / best-version pipeline (flatness/collapse/parent
+        # veto + parent-vs-children duel) lives in serve.kit_payload; the crate
+        # admit gate must run THAT exact builder so every stored track is
+        # proven to yield best-stems. Pin the call so it can't be swapped for a
+        # weaker check.
+        import inspect
+
+        from tone_forge.crate import ingest as _ingest
+        src = inspect.getsource(_ingest)
+        assert "kit_payload" in src, "admit gate must build the curated kit"
+        assert "_KIT_PADS_PER_SOURCE" in src, "must use the native per-source pad count"

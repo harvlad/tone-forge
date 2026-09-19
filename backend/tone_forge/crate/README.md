@@ -9,6 +9,36 @@ SAME donor ranker + render/mount path a user's own songs use. Nothing about
 loop rendering, caching, or client mounting is new; only the *pool* is
 (shared + curated + license-bearing).
 
+## HARD RULE — never compromise on extraction quality
+
+The crate is ingested **once** and matched/borrowed from **forever**. There
+must never be a reason to re-analyse a crate track because we realised we
+under-extracted it. So the ingest extracts the **complete** set of signals the
+crate's purpose (intelligent match + best-stems borrow) can use — **stems,
+melody, harmony, rhythm, key, structure, energy** — and **never drops one to
+make a fleet run finish faster**.
+
+- **Capture every data point, once.** `PipelineConfig.crate` is the full
+  `deep()` analysis (+ the crate stem-serve base): stems, MAX-fidelity melody
+  (the full ensemble, not basic-pitch-only), harmony, groove, key, structure,
+  energy, **plus** every metric that could ever assist matching/ranking —
+  `analyze_quality` (stem_quality/contamination/artifacts), `synth_behavior`
+  (timbre), `provenance`, `waveform`. There is deliberately **no "skipped"
+  list**.
+- **Speed is a logistics problem, not a quality dial.** If a run is too slow:
+  canary 1–2 pods to measure real per-track time, size the pod watchdog
+  (`WATCHDOG_SEC`) to fit, add pods, or **make the slow stage fast** — never
+  delete or downgrade a signal. The known offender is the torchcrepe ensemble
+  MIDI path running CPU-bound on the pod (~17 min/track); the fix is to
+  GPU-accelerate it on the A40, **not** to fall back to basic-pitch.
+- **Pinned by CI.** `tests/test_crate.py::TestCrateExtractionQuality` asserts
+  the crate captures everything `deep()` does for every analysis-signal flag —
+  a change that drops melody/stems, reverts the ensemble to basic-pitch, or
+  turns off any metric fails CI. The full pad-quality / best-**version**
+  pipeline (flatness/collapse/parent veto + parent-vs-children duel in
+  `serve.kit_payload`) applies to crate tracks: the admit gate stores a track
+  only if that exact builder yields ≥1 surviving pad.
+
 ## Modules
 
 | Module | Role |

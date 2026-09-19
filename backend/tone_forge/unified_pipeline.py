@@ -227,48 +227,74 @@ class PipelineConfig:
 
     @classmethod
     def crate(cls) -> "PipelineConfig":
-        """Vinyl-Crate seed ingest — everything the crate needs, nothing it
-        doesn't. Built to make a fleet run *complete*: the first 40-track run
-        failed because deep() runs per-stem torchcrepe MIDI extraction, which
-        ``local_engine/runpod_autoscaler.py`` documents as ~62% of a run and,
-        worse, the ensemble/gpu MIDI path does NOT use CUDA on a RunPod host —
-        so that 62% is CPU-bound even on a rented A40. At ~17 min/track that
-        blew the 1-hour pod watchdog before any shard uploaded.
+        """Vinyl-Crate seed ingest — extract every matchable musical signal to
+        its fullest potential, in ONE pass.
 
-        KEPT (what the crate consumes — see crate/ingest.features_from_result
-        and the blind gate):
-          - stems (force_stem_separation): borrow curates loops from them, and
-            the blind gate's curated kit is built from them. GPU-accelerated.
-          - chord lane: the pc_histogram (harmony match term) folds the chord
-            ribbon — borrow._song_pc_histogram reads chords, not MIDI.
-          - beats/tempo, detected_key (+ strength), sections + energy_curve:
-            all cheap, all feed CrateFeatures and the performance_graph.
+        HARD RULE (do not weaken this config for speed): the crate is a durable,
+        content-addressed library we ingest ONCE and match/borrow from forever.
+        There must never be a reason to re-analyse a crate track because we
+        realised we under-extracted it. So this config extracts the COMPLETE
+        set of signals the crate's purpose (intelligent match + best-stems
+        borrow) can use — stems, melody, harmony, rhythm, key, structure,
+        energy — and never drops one to make a fleet run finish faster. Speed
+        is a LOGISTICS problem (canary to measure per-track time, size the pod
+        watchdog, add pods), never a reason to compromise extraction quality.
+        Mirror of scripts/crate_fleet.py + tone_forge/crate/README.md.
 
-        SKIPPED (dominant or unused for the crate seed):
-          - extract_midi: the ~62% CPU killer. Dropping it defers the MELODY
-            match term ONLY — crate/match.py weights signals by confidence and
-            renormalizes over Σ(w·c), so a crate track with no melody lane is
-            ranked fairly on tempo/key/harmony/energy, not penalized (weight
-            0.15 melody term simply stays inactive). Re-enable later with
-            extract_midi=True + use_ensemble=False (basic-pitch only, no
-            torchcrepe) to restore melody without the ensemble cost.
-          - analyze_quality / provenance / synth_behavior: reconstruction-tone
-            analysis the crate never reads (the graph + kit need none of it).
-          - waveform: the crate stores no per-track viz waveform.
+        This config therefore captures the COMPLETE analysis — it is deep()
+        plus the crate's stem-serve base — so every data point is written once
+        and the crate never needs a second pass. Everything is a potential
+        match/rank signal or future consumer; we do not pre-judge which by
+        dropping it at ingest.
 
-        Kept include_profiling=True so the pod prints the per-stage breakdown
-        for the next capacity decision.
+        History: the first 40-track run used deep(), whose MIDI path runs a
+        per-stem torchcrepe ENSEMBLE that runpod_autoscaler.py documents as
+        ~62% of a run and that does NOT use CUDA on a RunPod host — CPU-bound
+        even on an A40, ~17 min/track, blowing the pod watchdog. TWO wrong fixes
+        were rejected: (v1) dropping extract_midi amputated melody; (v2) forcing
+        basic-pitch-only downgraded melody fidelity. The RULE says the fix for a
+        slow-but-correct stage is logistics, never a quality cut: sit under a
+        larger `WATCHDOG_SEC`, spread across more pods / fewer tracks per pod,
+        and above all GPU-accelerate the torchcrepe ensemble on the A40 (the
+        real win — full fidelity AND fast). See scripts/crate_fleet.py.
+
+        CAPTURED (the full deep() signal set — every crate match/borrow/rank
+        signal AND every metric that could ever assist matching):
+          - stems (force_stem_separation, GPU): best-VERSION curated kit +
+            borrow loops; the admit gate REQUIRES serve.kit_payload to yield ≥1
+            pad surviving the 2026-09-15 veto (flatness/collapse_ratio/
+            parent_overlap + parent-vs-children duel) — the full pad-quality
+            pipeline applies to crate tracks.
+          - MIDI/melody at MAX fidelity (use_ensemble=True): the crate/match.py
+            melody term + any future playable-melody consumer.
+          - chords/pc_histogram (harmony), beats/tempo (groove), detected_key,
+            sections + energy_curve (structure/energy): the match terms + the
+            performance_graph.
+          - analyze_quality (stem_quality/contamination/artifacts),
+            synth_behavior (timbre), provenance (lineage), waveform (viz): stored
+            once so they can feed donor ranking / future match dimensions without
+            a re-ingest.
+
+        There is intentionally nothing in a "skipped" list. If a stage is slow,
+        make it fast; do not remove it.
         """
         return cls(
             mode=AnalysisMode.DEEP,
             separate_stems=True,
-            force_stem_separation=True,   # borrow + blind-gate kit need stems
-            extract_midi=False,           # the ~62% CPU killer — defer melody
-            use_ensemble=False,           # moot with MIDI off; explicit for clarity
-            analyze_quality=False,        # reconstruction-tone analysis — unused
-            include_provenance=False,
-            detect_synth_behavior=False,
-            include_waveform=False,       # crate stores no viz waveform
+            force_stem_separation=True,   # borrow + best-version kit need stems
+            extract_midi=True,            # HARD RULE: melody is a match signal
+            use_ensemble=True,            # max-fidelity melody (ensemble, not
+            #                               basic-pitch-only) — every data point
+            #                               captured once. Speed is a LOGISTICS
+            #                               problem (watchdog/pods/GPU-accel of
+            #                               torchcrepe), never a quality dial.
+            analyze_quality=True,         # stem_quality/contamination/artifacts —
+            #                               separation metrics that can assist
+            #                               loop-donor ranking + song matching
+            include_provenance=True,      # analysis lineage — captured, not re-run
+            detect_synth_behavior=True,   # synth timbre — a match signal for
+            #                               synth-heavy donors
+            include_waveform=True,        # per-track viz stored once
             include_profiling=True,       # keep the per-stage breakdown on the pod
             stem_serve_url_base="/api/admin/serve-file",
         )
