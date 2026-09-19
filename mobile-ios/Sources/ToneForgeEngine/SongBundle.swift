@@ -11,10 +11,11 @@
 //     "analysisId": "…",
 //     "meta": { title, artist, sourceUrl, durationSec, tempoBpm, detectedKey },
 //     "timeline": {
-//       "chords":    [{start, end, symbol}],
-//       "sections":  [{start, end, label?}],
-//       "beats":     [Double],
-//       "downbeats": [Double]
+//       "chords":       [{start, end, symbol}],
+//       "chordsByStem": { "<stem>": [{start, end, symbol}], ... },  // additive
+//       "sections":     [{start, end, label?}],
+//       "beats":        [Double],
+//       "downbeats":    [Double]
 //     },
 //     "stems": [{role, url, codec, sampleRateHz}],
 //     "presets": {
@@ -116,21 +117,73 @@ public struct BundleMeta: Codable, Sendable, Equatable {
 // MARK: - Timeline
 
 public struct BundleTimeline: Codable, Sendable, Equatable {
+    /// Legacy flat chord lane — the "other" stem's progression. Kept for
+    /// backward-compat with bundles cached before per-stem lanes existed,
+    /// and as the fallback when `chordsByStem` is absent. Prefer
+    /// ``resolvedChords`` for anything that displays the song's harmony.
     public let chords: [ChordEvent]
+    /// Per-stem chord lanes keyed by stem name (guitar_1, other, piano, …).
+    /// Additive: nil on legacy/cached bundles. The server drops empty
+    /// lanes, so a present-but-thin dict is honest. See ``resolvedChords``.
+    public let chordsByStem: [String: [ChordEvent]]?
     public let sections: [SectionEvent]
     public let beats: [Double]
     public let downbeats: [Double]
 
     public init(
         chords: [ChordEvent] = [],
+        chordsByStem: [String: [ChordEvent]]? = nil,
         sections: [SectionEvent] = [],
         beats: [Double] = [],
         downbeats: [Double] = []
     ) {
         self.chords = chords
+        self.chordsByStem = chordsByStem
         self.sections = sections
         self.beats = beats
         self.downbeats = downbeats
+    }
+
+    /// Stems whose "chord" lanes are melody-traced (``vocals``,
+    /// monophonic) or hallucinated on unpitched material (``drums``) —
+    /// never real harmony. Excluded from the richest-lane pick exactly as
+    /// the web (`jam.js`) and desktop (`ChordLaneSelection`) surfaces do,
+    /// so all three agree on the same lane for the same song. The server
+    /// drops these lanes for new bundles, but a legacy/cached bundle can
+    /// still carry them — and a long vocals lane out-covers the real
+    /// guitar lane — so the exclusion must live here too, not only on the
+    /// wire (defect: iOS was the one surface missing it).
+    private static let nonHarmonicLanes: Set<String> = ["vocals", "drums"]
+
+    /// The chord progression to DISPLAY: the per-stem lane with the
+    /// richest coverage, falling back to the legacy flat ``chords`` lane
+    /// when no per-stem lanes are present (legacy/cached bundles).
+    ///
+    /// Swift port of web's `_richestChordLane` (jam.js), bit-for-bit with
+    /// desktop's `ChordLaneSelection.richestChordLane`: exclude the
+    /// ``vocals``/``drums`` non-harmonic lanes, rank the rest by SUMMED
+    /// region seconds — not region count, so a lane of many half-beat
+    /// slivers doesn't outrank one long honest lane and vice versa — with
+    /// lane names sorted so ties resolve deterministically, and skip empty
+    /// lanes so an all-empty/all-excluded dict falls back to ``chords``
+    /// rather than returning nothing. The old hard-pin to the "other" lane
+    /// showed Cross Bones Style's ~10%-coverage residual while its guitar
+    /// lane carried the real harmony; every native chord consumer keys off
+    /// THIS instead.
+    public var resolvedChords: [ChordEvent] {
+        guard let byStem = chordsByStem, !byStem.isEmpty else { return chords }
+        var best: [ChordEvent]?
+        var bestCoverage = -1.0
+        for name in byStem.keys.sorted() {
+            if Self.nonHarmonicLanes.contains(name) { continue }
+            guard let lane = byStem[name], !lane.isEmpty else { continue }
+            let coverage = lane.reduce(0.0) { $0 + max(0.0, $1.end - $1.start) }
+            if coverage > bestCoverage {
+                bestCoverage = coverage
+                best = lane
+            }
+        }
+        return best ?? chords
     }
 }
 

@@ -46,7 +46,7 @@ struct SectionDetailSheet: View {
         SectionBars.bars(
             section: section,
             downbeats: appState.currentBundle?.timeline.downbeats ?? [],
-            chords: appState.currentBundle?.timeline.chords ?? [],
+            chords: appState.currentBundle?.timeline.resolvedChords ?? [],
             tempoBpm: appState.currentBundle?.meta.tempoBpm
         )
     }

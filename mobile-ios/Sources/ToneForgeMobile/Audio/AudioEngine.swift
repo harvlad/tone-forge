@@ -485,6 +485,34 @@ public final class AudioEngine: ObservableObject {
         // implicit non-actor context, so we build the session lazily
         // here. `self` is already @MainActor, so this is fine.
         self.session = session ?? AudioSessionController()
+        #if canImport(AVFoundation)
+        // Slave the transport to the audio render clock (drift-free vs
+        // audio) + wire output latency so the chord ribbon tracks the
+        // audible chord, not the sample being rendered ahead. Capture the
+        // AVAudioEngine's output node directly (not `self`, not the
+        // @MainActor session) so the closures stay off the main actor —
+        // they run on audio render threads. `lastRenderTime` is nil until
+        // the engine has rendered; the clock falls back to its wall clock
+        // and adopts the sample anchor on the first valid read.
+        let outputNode = engine.outputNode
+        clock.attachRenderClock(
+            sampleProvider: {
+                guard let rt = outputNode.lastRenderTime,
+                      rt.isSampleTimeValid, rt.sampleRate > 0 else { return nil }
+                return TransportClock.RenderSample(
+                    sampleTime: rt.sampleTime, sampleRate: rt.sampleRate)
+            },
+            outputLatencyProvider: {
+                // Global singleton — thread-safe to read from any thread,
+                // so no @MainActor hop. iOS-only; macOS CLI has no session.
+                #if os(iOS)
+                return AVAudioSession.sharedInstance().outputLatency
+                #else
+                return 0
+                #endif
+            }
+        )
+        #endif
     }
 
     // MARK: - Lifecycle

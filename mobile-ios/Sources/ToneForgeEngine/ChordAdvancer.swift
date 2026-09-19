@@ -1,6 +1,7 @@
 // ChordAdvancer.swift
 //
-// Walks the `bundle.timeline.chords` array against a monotonic song
+// Walks a chord timeline (the bundle's richest-lane `resolvedChords`,
+// NOT the sparse legacy flat lane) against a monotonic song
 // clock and produces:
 //   - the currently-playing chord event
 //   - the chord that will play next (if any)

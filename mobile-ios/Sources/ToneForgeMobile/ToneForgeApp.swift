@@ -2125,7 +2125,11 @@ public final class AppState: ObservableObject {
                 detuneCents: pad.detuneCents
             ))
         }
-        advancer = ChordAdvancer(chords: bundle.timeline.chords)
+        // Richest per-stem lane (guitar-forward songs put their harmony on
+        // the guitar lane, not the sparse "other" lane the flat `chords`
+        // field carries). Mirrors web's _richestChordLane; falls back to
+        // the legacy flat lane on old/cached bundles.
+        advancer = ChordAdvancer(chords: bundle.timeline.resolvedChords)
         // Sync performance FX (gater/flanger/throw/stopper) to this
         // song's beat grid (PERFORM_PARITY spec 1).
         audioEngine.setPerfFXBeatClock(
@@ -3798,7 +3802,12 @@ public final class AppState: ObservableObject {
 
     private func refreshChordFrame() {
         let previousSymbol = currentChord?.symbol
-        let frame = advancer.frame(at: songSeconds)
+        // The chord highlight must track what the listener HEARS, not the
+        // sample the engine is rendering ahead into the output buffer.
+        // audibleSongSeconds subtracts the hardware output latency so the
+        // ribbon stops leading the audio (badly on Bluetooth). The scrubber
+        // + scheduling stay on the render clock (songSeconds).
+        let frame = advancer.frame(at: audioEngine.clock.audibleSongSeconds)
         currentChord = frame.active
         nextChord = frame.next
         chordPhase = frame.phase

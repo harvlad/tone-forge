@@ -269,7 +269,7 @@ struct PerformView: View {
                 currentChordSymbol: appState.currentChord?.symbol,
                 nextChordSymbol: appState.nextChord?.symbol,
                 followEnabled: jamSettings.followEnabled,
-                songChordSymbols: appState.currentBundle?.timeline.chords.map(\.symbol) ?? []
+                songChordSymbols: appState.currentBundle?.timeline.resolvedChords.map(\.symbol) ?? []
             )
         case .samples:
             // SAME grid as Jam (UX audit fix #4): Perform previously rendered
